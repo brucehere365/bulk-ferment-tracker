@@ -257,6 +257,69 @@ ok('zero-length moments get a visible duration',
   ics.indexOf('DTSTART:' + new Date(finalFeed.start).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')) > 0);
 ok('commas and semicolons are escaped', ics.indexOf('\\,') > 0 || ics.indexOf('\;') > 0);
 
+head('FORWARD PLANNER — start now, finish when it finishes');
+/* Tuesday 09:00, starter already active. Printed before it is asserted on,
+ * same habit as the reverse example: the arithmetic should be readable. */
+var START = at(2026, 8, 18, 9, 0);
+var fwd = P.planForward(TPL, { startAt: START, bulkTempC: 22, fromFridge: false });
+fwd.days.forEach(function (d) {
+  console.log('  ' + new Date(d.dateMs).toDateString());
+  d.events.forEach(function (e) {
+    if (e.container) return;
+    console.log('     ' + hm(e.start).slice(4) + '  ' + pad(e.name, 24) +
+      (e.end > e.start ? 'until ' + hm(e.end).slice(4) : ''));
+  });
+});
+console.log('  out of the oven ' + hm(fwd.params.finishAt));
+
+near('the first thing to do lands exactly on the start time', fwd.events[0].start, START, 0.001);
+ok('nothing at all is scheduled before it',
+  fwd.events.every(function (e) { return e.start >= START - 1; }));
+ok('the finish falls out of the plan rather than being asked for',
+  fwd.params.finishAt > START && fwd.params.direction === 'forward');
+var fBulk = fwd.events.filter(function (e) { return e.chain && e.type === 'bulk'; })[0];
+near('bulk is still 1 ÷ r(T) and nothing else',
+  fBulk.end, fBulk.start + M.hoursAt(22) * P.HOUR, 0.001);
+var fFolds = fwd.events.filter(function (e) { return e.kind === 'rep'; });
+ok('all four coil folds are inside the bulk window', fFolds.length === 4 &&
+  fFolds.every(function (e) { return e.start >= fBulk.start && e.start <= fBulk.end; }));
+ok('an active starter skips the revival feeds',
+  fwd.events.filter(function (e) { return e.feedRole === 'revival'; }).length === 0);
+ok('a fridge starter does not',
+  P.planForward(TPL, { startAt: START, bulkTempC: 22, fromFridge: true })
+    .events.filter(function (e) { return e.feedRole === 'revival'; }).length === 2);
+
+/* The same stages either way. A forward plan is the reverse plan seen from
+ * the other end, not a second set of arithmetic. */
+var back = P.planBackwards(TPL, { finishAt: fwd.params.finishAt, bulkTempC: 22, fromFridge: false });
+ok('forwards and backwards produce the same events in the same order',
+  fwd.events.length === back.events.length &&
+  fwd.events.every(function (e, i) { return e.name === back.events[i].name; }));
+
+ok('a 09:00 start is called out for putting shaping in the small hours',
+  fwd.problems.some(function (p) { return p.kind === 'from-start'; }));
+ok('and it is not silently planned — a later start is costed',
+  fwd.options.length === 1 && fwd.options[0].kind === 'start-later');
+var fixed = P.planForward(TPL, {
+  startAt: fwd.options[0].startAt, bulkTempC: 22, fromFridge: false
+});
+console.log('  escape: ' + fwd.options[0].text);
+ok('the escape it offers actually clears the night', fixed.problems.length === 0);
+ok('and it is a later start, never an impossible earlier one', fwd.options[0].startAt > START);
+ok('no hands-on step in the fixed plan lands at night',
+  fixed.events.every(function (e) { return !(e.handsOn && P.isNight(e.start)); }));
+
+var lateStart = P.planForward(TPL, { startAt: at(2026, 8, 18, 22, 0), bulkTempC: 22, fromFridge: false });
+ok('the step you are about to do is not reported back to you as a problem',
+  lateStart.problems.every(function (p) { return p.text.indexOf('Mix + autolyse at 22:00') < 0; }));
+
+var committed = P.commitPlan(fwd, 'Forward bake');
+ok('a forward plan commits like any other', committed.status === 'active' &&
+  committed.events.every(function (e) { return e.plannedStart != null && e.actualStart === null; }));
+var ftl = P.projectTimeline(committed, START, null);
+ok('and reconciles through the same projection',
+  ftl.chain.length === back.events.filter(function (e) { return e.chain; }).length && !ftl.started);
+
 head('AVERAGE TEMP — the planner default from the last bake');
 var avg = P.averageTemp([
   { id: 'a', t: 0, temp: 24, rise: null },

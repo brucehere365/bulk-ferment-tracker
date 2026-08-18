@@ -180,6 +180,11 @@ button { font: inherit; color: inherit; background: none; border: 0; }
   mask: var(--ill-levain) no-repeat center / contain;
   pointer-events: none;
 }
+/* The hero on the way into a bake carries two lines of prose where the others
+ * carry one big number, so the line art moves out of the text's way. */
+.hero.setup .remain { max-width: 82%; }
+.hero.setup::after { right: -34px; bottom: -32px; opacity: .14; }
+
 /* The stage you are actually in, inside a full bake. */
 .hero.now { background-color: var(--peri); color: var(--peri-ink); }
 .hero.now::after { -webkit-mask-image: var(--ill-hands); mask-image: var(--ill-hands); opacity: .34; }
@@ -373,6 +378,42 @@ html.night .mode::before { background: rgba(232, 223, 213, .12); }
   mask: var(--ill-arrow) no-repeat center / contain;
 }
 
+/* ========================================================== loaf picker */
+/* Picking what you are baking. Uniform cards on purpose: colour means
+ * something everywhere else in here, and "the first template" is not a
+ * meaning. The loaf line art marks the card as a recipe, nothing more. */
+.loaves { display: flex; flex-direction: column; gap: 12px; }
+.loaf {
+  position: relative; overflow: hidden; display: block; width: 100%; text-align: left;
+  background: var(--surface); border: 1px solid var(--line-soft);
+  border-radius: var(--r-card); padding: 22px 84px 20px 22px; min-height: 116px;
+  color: var(--ink); transition: transform .16s var(--ease), border-color .16s;
+}
+.loaf:active { transform: scale(.985); border-color: var(--accent); }
+.loaf b { display: block; font: 500 21px/1.2 var(--sans); letter-spacing: -.02em; }
+.loaf em {
+  display: block; font-style: normal; font: 300 13.5px/1.45 var(--sans);
+  color: var(--muted); margin-top: 7px;
+}
+.loaf .meta {
+  display: block; font: 400 10.5px/1.5 var(--mono);
+  letter-spacing: .08em; text-transform: uppercase; color: var(--muted-2); margin-top: 12px;
+  padding-right: 24px;                    /* clear of the corner arrow */
+}
+.loaf::after {
+  content: ''; position: absolute; right: 14px; top: 20px;
+  width: 58px; height: 58px; background: currentColor; opacity: .18;
+  -webkit-mask: var(--ill-loaf) no-repeat center / contain;
+  mask: var(--ill-loaf) no-repeat center / contain;
+  pointer-events: none;
+}
+.loaf b::after {
+  content: ''; position: absolute; right: 30px; bottom: 22px;
+  width: 16px; height: 16px; background: var(--muted-2);
+  -webkit-mask: var(--ill-arrow) no-repeat center / contain;
+  mask: var(--ill-arrow) no-repeat center / contain;
+}
+
 .resume {
   position: relative; overflow: hidden; display: block; width: 100%; text-align: left;
   background: var(--blue); color: var(--blue-ink);
@@ -516,6 +557,9 @@ label.field textarea { min-height: 92px; resize: vertical; font-size: 15px; }
 }
 .toggle .t { flex: 1; font: 400 15px/1.3 var(--sans); }
 .toggle .t em { display: block; font-style: normal; font: 300 12.5px/1.4 var(--sans); color: var(--muted-2); margin-top: 4px; }
+/* A toggle row whose control is a button rather than a switch — same row,
+ * same tap target, so the two settings on the way into a bake line up. */
+.toggle .btn { width: auto; flex: 0 0 auto; }
 .switch {
   width: 52px; height: 30px; border-radius: 15px; flex: 0 0 auto; position: relative;
   background: var(--line); transition: background-color .2s;

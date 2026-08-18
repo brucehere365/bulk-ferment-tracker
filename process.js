@@ -422,6 +422,13 @@
     return { events: events, chainStart: cursor, starts: starts, ends: ends, coldMin: opts.coldMin };
   }
 
+  /* Naming every offending step is a wall of text, and a wall of text at 3am
+   * is the same as saying nothing. Name the first few and count the rest. */
+  function nameTimes(list, cap) {
+    return list.slice(0, cap).map(function (e) { return e.name + ' at ' + hhmm(e.start); }).join(', ') +
+      (list.length > cap ? ', and ' + (list.length - cap) + ' more' : '');
+  }
+
   function nightHits(events, movableOnly) {
     return events.filter(function (e) {
       if (!e.handsOn) return false;
@@ -485,9 +492,7 @@
     if (hits.length) {
       problems.push({
         kind: 'unsociable',
-        text: 'The cold proof cannot absorb this. ' + hits.map(function (e) {
-          return e.name + ' lands at ' + hhmm(e.start);
-        }).join(', ') + '.'
+        text: 'The cold proof cannot absorb this. ' + nameTimes(hits, 3) + '.'
       });
       options = escapeOptions(template, {
         finishAt: finishAt, bulkTempC: bulkTempC, fromFridge: fromFridge,
@@ -503,7 +508,7 @@
     if (pinnedNight.length) {
       problems.push({
         kind: 'pinned-night',
-        text: pinnedNight.map(function (e) { return e.name + ' at ' + hhmm(e.start); }).join(', ') +
+        text: nameTimes(pinnedNight, 3) +
           ' — that follows straight from the finish time you asked for. Move the bake time to move it.'
       });
     }
@@ -613,6 +618,138 @@
       });
     }
     return out;
+  }
+
+  // -------------------------------------------------------- forward planner
+
+  /* Forward planner. Same walk as the reverse one, anchored at the front
+   * instead of the back: the first thing you have to do lands on `startAt` and
+   * the loaf comes out of the oven whenever it comes out. This is what a full
+   * bake needs — you pick the loaf, not the deadline — so the schedule has to
+   * fall out of "now" rather than out of a finish time.
+   *
+   * It reuses `backwardsPass` rather than walking the stages a second time.
+   * Once bulkTempC and coldMin are fixed every offset inside a pass is fixed
+   * too, so the whole plan is linear in finishAt: one probe measures the lead
+   * time, a second run lands it on the start. One planner, one arithmetic. */
+  function planForward(template, opts) {
+    template = normalizeTemplate(template);
+    opts = opts || {};
+    var startAt = opts.startAt == null ? Date.now() : opts.startAt;
+    var bulkTempC = num(opts.bulkTempC, 22);
+    var fromFridge = !!opts.fromFridge;
+
+    var cold = chainStages(template).filter(function (s) { return s.type === 'cold-proof'; })[0] || null;
+    var baseCold = cold ? (cold.minMin + cold.maxMin) / 2 : null;
+
+    function anchored(coldMin) {
+      function run(finishAt) {
+        return backwardsPass(template, {
+          finishAt: finishAt, bulkTempC: bulkTempC, coldMin: coldMin, fromFridge: fromFridge
+        });
+      }
+      var probe = run(startAt);
+      if (!probe.events.length) return probe;
+      return run(startAt + (startAt - probe.events[0].start));
+    }
+
+    /* The pinning is the mirror image of the reverse plan's. There the finish
+     * time nails everything from the fridge onwards; here the start time nails
+     * everything up to it, and the bake is what floats. `movable` in a pass
+     * means "before the cold proof ends", so the steps the cold proof can still
+     * rescue are exactly the ones the pass calls unmovable. */
+    function lateNight(events) {
+      return events.filter(function (e) {
+        return e.handsOn && !e.movable && e.kind !== 'feed' && isNight(e.start);
+      });
+    }
+
+    var adjustments = [], problems = [];
+    var chosenCold = baseCold;
+    var pass = anchored(baseCold);
+    var hits = lateNight(pass.events);
+
+    if (hits.length && cold) {
+      var best = null;
+      for (var c = cold.minMin; c <= cold.maxMin + 0.001; c += 15) {
+        var cand = anchored(c);
+        var h = lateNight(cand.events).length;
+        var score = [h, Math.abs(c - baseCold)];
+        if (!best || score[0] < best.score[0] || (score[0] === best.score[0] && score[1] < best.score[1])) {
+          best = { coldMin: c, pass: cand, hits: h, score: score };
+        }
+      }
+      if (best && best.hits < hits.length) {
+        chosenCold = best.coldMin; pass = best.pass;
+        var delta = best.coldMin - baseCold;
+        adjustments.push({
+          kind: 'cold-proof',
+          text: 'Cold proof ' + (delta > 0 ? 'stretched to ' : 'squeezed to ') + fmtHours(best.coldMin / 60) +
+            ' (' + (delta > 0 ? '+' : '') + Math.round(delta) + ' min on the midpoint) so the oven is not on in the middle of the night.'
+        });
+      }
+      hits = lateNight(pass.events);
+    }
+
+    if (hits.length) {
+      problems.push({
+        kind: 'unsociable',
+        text: 'The cold proof cannot absorb this. ' + nameTimes(hits, 3) + '.'
+      });
+    }
+
+    /* Everything before the fridge follows straight from starting now, and the
+     * step you are about to do is not news. Report the rest; do not pretend the
+     * schedule can move a start time you chose. */
+    var early = pass.events.filter(function (e) {
+      return e.handsOn && e.movable && e.start > startAt && isNight(e.start);
+    });
+    if (early.length) {
+      problems.push({
+        kind: 'from-start',
+        text: nameTimes(early, 3) +
+          ' — that follows from starting now. Start later, or plan backwards from when you want the loaf out.'
+      });
+    }
+
+    /* One knob is genuinely free in a forward plan: when you start. If the
+     * night cannot be cleared from now, find the smallest later start that
+     * clears it. That is a real answer; "try again" is not. `probe` stops the
+     * search recursing into itself. */
+    var options = [];
+    if (problems.length && !opts.probe) {
+      for (var d = 30; d <= 720; d += 30) {
+        var at = startAt + d * MIN;
+        var cand2 = planForward(template, {
+          startAt: at, bulkTempC: bulkTempC, fromFridge: fromFridge, probe: true
+        });
+        if (cand2.problems.length) continue;
+        options.push({
+          kind: 'start-later', startAt: at,
+          text: 'Start at ' + hhmm(at) + ' instead — ' + fmtHours(d / 60) +
+            ' from now, and nothing lands in the small hours.'
+        });
+        break;
+      }
+    }
+
+    var events = pass.events;
+    var finishAt = events.reduce(function (a, e) { return e.chain && e.end > a ? e.end : a; }, startAt);
+
+    return {
+      template: template,
+      events: events,
+      days: groupByDay(events),
+      adjustments: adjustments,
+      problems: problems,
+      options: options,
+      params: {
+        direction: 'forward', startAt: startAt, finishAt: finishAt,
+        bulkTempC: bulkTempC, fromFridge: fromFridge,
+        coldMin: chosenCold, baseColdMin: baseCold,
+        bulkHours: M.hoursAt(bulkTempC), templateId: template.id
+      }
+    };
   }
 
   function groupByDay(events) {
@@ -828,7 +965,8 @@
     normalizeStage: normalizeStage, duplicateTemplate: duplicateTemplate, blankStage: blankStage,
     stageDurationMin: stageDurationMin, chainStages: chainStages, findStage: findStage,
     isNight: isNight, previousEvening: previousEvening,
-    backwardsPass: backwardsPass, planBackwards: planBackwards, groupByDay: groupByDay,
+    backwardsPass: backwardsPass, planBackwards: planBackwards, planForward: planForward,
+    groupByDay: groupByDay,
     projectTimeline: projectTimeline, commitPlan: commitPlan,
     toICS: toICS, averageTemp: averageTemp, nudgeEvent: nudgeEvent,
     fmtHours: fmtHours, firstLine: firstLine, uid: uid, clone: clone

@@ -92,8 +92,15 @@ Picked from the home screen; a bake already in progress resumes straight from
 there.
 
 * **Bulk ferment only** — the original tool, unchanged. `view = 'live'`.
-* **Full bake** — run a committed plan stage by stage. `view = 'process'`.
+* **Full bake** — recipe-first. Pick a loaf (`view = 'loaf'`), confirm the two
+  things the schedule cannot know — is the starter cold, how warm is the
+  kitchen (`view = 'ready'`) — then run it stage by stage (`view = 'process'`).
+  The schedule is planned **forwards from now**.
 * **Plan backwards** — finish time in, schedule out. `view = 'planner'`.
+
+Full bake and Plan backwards are two doors to the same tracker, and they must
+not become the same screen. One starts from *what*, the other from *when*. If
+picking a loaf ever lands you on a datetime field again, that is the bug.
 
 ## Templates
 
@@ -126,6 +133,21 @@ offered only if it actually works. A night-time starter feed moves back to the
 previous 21:00 and reports the time-to-peak that move now demands. Steps pinned
 by the finish time itself (preheat, the bake) are flagged, not silently planned.
 
+## Forward planner
+
+`planForward()` is the same walk seen from the other end: the first thing you
+have to do lands on `startAt` and the finish falls out of it. It does not walk
+the stages a second time — every offset in a pass is fixed once `bulkTempC` and
+`coldMin` are, so the plan is linear in `finishAt`. One probe pass measures the
+lead time, a second run lands it on the start. Same events, same arithmetic.
+
+The pinning is mirrored too. Backwards, the finish time nails everything from
+the fridge onwards; forwards, the start time nails everything up to it and the
+bake is what floats — so the steps the cold proof can still rescue are exactly
+the ones a pass marks *unmovable*. What it cannot fix it reports, and the one
+knob genuinely free here is when you start: it scans later starts on a
+half-hour grid and offers the smallest one that clears the night.
+
 ## Reconciliation
 
 `BFProcess.projectTimeline()` rebuilds every time from two facts per stage:
@@ -138,14 +160,15 @@ the timeline says so on screen.
 ## Tests
 
     node tests.js           # fermentation model — 56 assertions
-    node process.tests.js   # templates, planner, reconciliation, .ics — 60
-    node ui.tests.js        # real DOM driven by clicks — 101 (needs: npm i jsdom)
+    node process.tests.js   # templates, both planners, reconciliation, .ics — 76
+    node ui.tests.js        # real DOM driven by clicks — 128 (needs: npm i jsdom)
 
 Run all three before pushing, since a push deploys.
 
-`process.tests.js` prints the worked example — out of the oven Friday 09:45,
-bulk at 22 °C, starter from the fridge — as a day-grouped timeline **before**
-asserting on it, so the arithmetic is readable rather than merely green. Keep
+`process.tests.js` prints both worked examples — backwards from out of the oven
+Friday 09:45, and forwards from Tuesday 09:00 — as day-grouped timelines
+**before** asserting on them, so the arithmetic is readable rather than merely
+green. It also prints the escape the forward planner offers, in words. Keep
 that habit: when the planner changes, read the printed timeline, do not just
 trust the pass count.
 
