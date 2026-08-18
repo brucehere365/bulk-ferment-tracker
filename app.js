@@ -208,6 +208,10 @@
   var openBakeId = null;
   var editingTemplateId = null;
   var timelineOpen = true;
+  /* What the full-bake flow has been told so far. Not persisted: it is a
+   * ten-second decision, and the plan it produces is re-derived from the clock
+   * on every render rather than stored. */
+  var bakeSetup = null;
 
   var VIEWS = {
     home: function () { return homeView(); },
@@ -216,6 +220,8 @@
     history: function () { return historyView(); },
     templates: function () { return templatesView(); },
     editor: function () { return editorView(findTemplate(editingTemplateId)); },
+    loaf: function () { return loafView(); },
+    ready: function () { return readyView(); },
     planner: function () { return plannerView(); },
     process: function () { return processView(activeProcess()); }
   };
@@ -243,6 +249,7 @@
     if (view === 'live' && !activeBake()) view = 'home';
     if (view === 'process' && !activeProcess()) view = 'home';
     if (view === 'editor' && !findTemplate(editingTemplateId)) view = 'templates';
+    if (view === 'ready' && !(bakeSetup && findTemplate(bakeSetup.templateId))) view = 'loaf';
     applyTheme();
     /* Entrance animations belong to arriving at a view, not to the clock. */
     app.className = view === lastView ? '' : 'enter';
@@ -267,8 +274,8 @@
       (bulk && !proc ? resumeCard('bulk', bulk) : '') +
       '<div class="section-title">' + (proc || bulk ? 'Or start something else' : 'What are you doing?') + '</div>' +
       '<div class="modes">' +
-      modeCard('mode-full', 'Full bake', 'Every stage, starter feed to oven-out. It keeps the clock.') +
-      modeCard('mode-plan', 'Plan backwards', 'Tell it when the loaf leaves the oven.') +
+      modeCard('mode-full', 'Full bake', 'Pick a loaf and start now. It walks you through every stage.') +
+      modeCard('mode-plan', 'Plan backwards', 'Work back from a fixed finish time.') +
       modeCard('mode-bulk', 'Bulk ferment only', 'One stage, watched closely by temperature.') +
       '</div>' +
       '<p class="note center">The clock is a suggestion. The dough decides.</p>';
@@ -832,6 +839,92 @@
     return d.getTime();
   }
 
+  /* A span you are reading days ahead of, not counting down. "51 h" is the
+   * honest precision there; "51 h 4 min" is arithmetic pretending to be a
+   * forecast. Under half a day the minutes still mean something. */
+  function roughly(ms) {
+    var h = ms / H;
+    return h >= 12 ? Math.round(h) + ' h' : P.fmtHours(h);
+  }
+
+  // ------------------------------------------------------ full bake: entry
+  /* Full bake is recipe-first. You say what you are making and the schedule
+   * falls out of that plus now. The reverse planner is the other door, for
+   * when the deadline rather than the loaf is the fixed thing — the two used
+   * to land on the same screen, which made them look like one feature. */
+  function loafView() {
+    return '<div class="topbar"><button class="iconbtn" data-act="home">Back</button>' +
+      '<h1><span class="sub">Full bake</span>What are you <b>baking?</b></h1></div>' +
+      '<p class="note">Pick a loaf. From there the app walks the stages with you — starter feed to oven-out — ' +
+      'and keeps the clock while you do.</p>' +
+      '<div class="loaves">' + state.templates.map(loafCard).join('') + '</div>' +
+      '<div class="spacer"></div>' +
+      '<button class="btn ghost" data-act="templates">Edit a loaf, or add another</button>';
+  }
+
+  function loafCard(t) {
+    var chain = P.chainStages(t);
+    var bulk = t.stages.filter(function (s) { return s.type === 'bulk'; })[0];
+    var endToEnd = chain.reduce(function (a, s) { return a + P.stageDurationMin(s, {}); }, 0) / 60;
+    /* To the nearest hour on a card. The minutes are a fiction anyway — this
+     * is a shape-of-the-day number, and the real one arrives on the next
+     * screen once the app knows when you are starting. */
+    return '<button class="loaf" data-act="loaf-pick" data-id="' + t.id + '">' +
+      '<b>' + esc(t.name) + '</b>' +
+      (t.description ? '<em>' + esc(t.description) + '</em>' : '') +
+      '<span class="meta">' + t.stages.length + ' stages · ' +
+      (endToEnd >= 2 ? '~' + Math.round(endToEnd) + ' h' : P.fmtHours(endToEnd)) + ' end to end' +
+      (bulk ? ' · bulk ' + n1(bulk.targetTempC) + ' °C' : '') + '</span></button>';
+  }
+
+  /* The one screen between picking a loaf and being in a bake. It answers the
+   * only two questions the schedule cannot answer for you — is the starter
+   * cold, and how warm is the kitchen — then shows the whole day it implies.
+   * Recomputed from the clock on every render, never stored half-planned. */
+  function readyView() {
+    var tpl = findTemplate(bakeSetup.templateId);
+    var now = Date.now();
+    var startAt = bakeSetup.startAt != null && bakeSetup.startAt > now ? bakeSetup.startAt : now;
+    var plan = P.planForward(tpl, {
+      startAt: startAt, bulkTempC: bakeSetup.bulkTempC, fromFridge: bakeSetup.fromFridge
+    });
+    var first = plan.events[0];
+    var later = startAt > now;
+
+    var out = '<div class="topbar"><button class="iconbtn" data-act="loaves">Back</button>' +
+      '<h1><span class="sub">' + esc(tpl.name) + '</span>' +
+      (later ? 'Start at <b>' + clock(startAt) + '?</b>' : 'Start <b>now?</b>') + '</h1></div>';
+
+    out += '<div class="hero setup"><div class="label">' +
+      (later ? 'First step, ' + roughly(startAt - now) + ' from now' : 'First step, straight away') + '</div>' +
+      '<div class="time small">' + esc(first ? first.name : 'Nothing to do — this loaf has no stages') + '</div>' +
+      (first ? '<div class="remain">Out of the oven <strong>' + clock(plan.params.finishAt) + '</strong>' +
+        dayTag(plan.params.finishAt, now) + ' — ' + roughly(plan.params.finishAt - now) + ' from now.</div>' : '') +
+      '</div>';
+
+    out += '<div class="toggle"><div class="t">Starter is in the fridge' +
+      '<em>' + (bakeSetup.fromFridge
+        ? 'Revival feeds go in first — that is most of the waiting.'
+        : 'Already up and active, so straight to the final feed.') + '</em></div>' +
+      '<button type="button" class="switch" role="switch" aria-checked="' + !!bakeSetup.fromFridge +
+      '" data-act="t-ready-fridge"><i></i></button></div>';
+
+    out += '<div class="toggle"><div class="t">Bulk around ' + n1(bakeSetup.bulkTempC) + ' °C' +
+      '<em>' + P.fmtHours(M.hoursAt(bakeSetup.bulkTempC)) + ' of bulk from the curve. Once you are in it the tracker ' +
+      're-reads it from the dough, so this only has to be close.</em></div>' +
+      '<button class="btn small ghost" data-act="ready-temp">Change</button></div>';
+
+    out += '<div class="section-title">The whole bake</div>' +
+      planNotes(plan, 'ready-opt') + bulkNote(plan) + planList(plan, false);
+
+    out += '<div class="actions">' +
+      '<button class="btn primary" data-act="ready-start">' + (later ? 'Arm this' : 'Start baking') + '</button>' +
+      '<button class="btn" data-act="mode-plan">Fixed finish time</button></div>' +
+      '<p class="note">Every time on this list is an estimate. Tick each stage off as you actually do it and ' +
+      'everything after it moves with you.</p>';
+    return out;
+  }
+
   function plannerView() {
     var d = state.draft;
     var lastT = lastBulkTemp();
@@ -867,53 +960,69 @@
       form + (d ? draftBlock(d) : '');
   }
 
-  function draftBlock(d) {
-    var out = '<div class="section-title">The schedule</div>';
-
+  /* What went wrong, the ways out, and what the planner moved on your behalf.
+   * Both directions produce the same three things, so both render them the
+   * same way — only the button that applies an escape differs. */
+  function planNotes(d, applyAct) {
+    var out = '';
     d.problems.forEach(function (pr) {
-      out += '<div class="callout warn"><b>' + (pr.kind === 'pinned-night' ? 'That bake time puts you in the kitchen at night' : 'The cold proof cannot absorb this') + '</b>' + esc(pr.text) + '</div>';
+      out += '<div class="callout warn"><b>' + (
+        pr.kind === 'pinned-night' ? 'That bake time puts you in the kitchen at night'
+          : pr.kind === 'from-start' ? 'Starting now puts you in the kitchen at night'
+            : 'The cold proof cannot absorb this') +
+        '</b>' + esc(pr.text) + '</div>';
     });
     if (d.options.length) {
       out += '<div class="callout"><b>Ways out</b><ul>' +
         d.options.map(function (o) {
-          return '<li>' + esc(o.text) + ' <button class="linkbtn" data-act="opt-apply" data-id="' + o.kind + '">Use this</button></li>';
+          return '<li>' + esc(o.text) + ' <button class="linkbtn" data-act="' + applyAct + '" data-id="' + o.kind + '">Use this</button></li>';
         }).join('') + '</ul></div>';
     }
     if (d.adjustments.length) {
       out += '<div class="callout"><b>What it moved for you</b><ul>' +
         d.adjustments.map(function (a) { return '<li>' + esc(a.text) + '</li>'; }).join('') + '</ul></div>';
     }
+    return out;
+  }
 
+  function bulkNote(d) {
     var bulk = d.events.filter(function (e) { return e.chain && e.type === 'bulk'; })[0];
-    if (bulk) {
-      out += '<p class="note">Bulk is ' + P.fmtHours((bulk.end - bulk.start) / H) + ' because that is 1 ÷ r(' +
-        n1(d.params.bulkTempC) + ' °C) from the fitted curve. Run colder and it lengthens; the live tracker will re-read it from the dough.</p>';
-    }
+    if (!bulk) return '';
+    return '<p class="note">Bulk is ' + P.fmtHours((bulk.end - bulk.start) / H) + ' because that is 1 ÷ r(' +
+      n1(d.params.bulkTempC) + ' °C) from the fitted curve. Run colder and it lengthens; the live tracker will re-read it from the dough.</p>';
+  }
 
-    out += '<ul class="plan">';
+  /* Draggable only where dragging means something. On the reverse plan a row
+   * is a thing you negotiate with; on the way into a bake it is a preview. */
+  function planList(d, draggable) {
+    var out = '<ul class="plan">';
     d.days.forEach(function (day) {
       out += '<li class="planday">' + new Date(day.dateMs).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' }) + '</li>';
       day.events.forEach(function (e) {
         if (e.container) return;
-        out += planRow(e);
+        out += planRow(e, draggable);
       });
     });
-    out += '</ul>';
+    return out + '</ul>';
+  }
 
-    out += '<div class="actions">' +
+  function draftBlock(d) {
+    return '<div class="section-title">The schedule</div>' +
+      planNotes(d, 'opt-apply') + bulkNote(d) + planList(d, true) +
+      '<div class="actions">' +
       '<button class="btn primary" data-act="plan-start">Start this plan</button>' +
       '<button class="btn" data-act="plan-ics">Export .ics</button></div>' +
       '<p class="note">Drag a row sideways to move it — everything after it follows. Tap it to type an exact time.</p>';
-    return out;
   }
 
-  function planRow(e) {
+  function planRow(e, draggable) {
     var night = P.isNight(e.start) && e.handsOn;
-    return '<li class="planrow' + (night ? ' night' : '') + (e.kind === 'rep' || e.kind === 'bake-step' ? ' sub' : '') + '" data-drag="' + e.id + '">' +
+    return '<li class="planrow' + (night ? ' night' : '') + (e.kind === 'rep' || e.kind === 'bake-step' ? ' sub' : '') + '"' +
+      (draggable ? ' data-drag="' + e.id + '"' : '') + '>' +
       '<span class="when">' + clock(e.start) + '</span>' +
       '<span class="what"><b>' + esc(e.name) + '</b><em>' + esc(e.detail || '') + '</em>' +
       (e.end > e.start ? '<em class="til">until ' + clock(e.end) + dayTag(e.end, e.start) + ' · ' + dur(e.end - e.start) + '</em>' : '') +
-      '</span><span class="grip" aria-hidden="true">⋮⋮</span></li>';
+      '</span>' + (draggable ? '<span class="grip" aria-hidden="true">⋮⋮</span>' : '') + '</li>';
   }
 
   function computePlan(form) {
@@ -1653,6 +1762,27 @@
     toast('Plan armed. First up: ' + (proc.events[0] || first).name + ' at ' + clock((proc.events[0] || first).plannedStart) + '.');
   }
 
+  /* Committing the forward plan. Same commit as the reverse one — a full bake
+   * is a full bake however you arrived at it — so the process view, the
+   * reconciliation and the bulk takeover are all the existing code. */
+  function startForward() {
+    var tpl = findTemplate(bakeSetup.templateId);
+    var now = Date.now();
+    var startAt = bakeSetup.startAt != null && bakeSetup.startAt > now ? bakeSetup.startAt : now;
+    var plan = P.planForward(tpl, {
+      startAt: startAt, bulkTempC: bakeSetup.bulkTempC, fromFridge: bakeSetup.fromFridge
+    });
+    var proc = P.commitPlan(plan, tpl.name + ' — ' +
+      new Date(startAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }));
+    state.processes.push(proc);
+    state.activeProcessId = proc.id;
+    bakeSetup = null;
+    save(); view = 'process'; render(); unlockAudio();
+    var first = proc.events[0];
+    toast(first ? (startAt > now ? 'Armed. First up: ' + first.name + ' at ' + clock(first.plannedStart) + '.'
+      : 'Started. First up: ' + first.name + '.') : 'Bake started.');
+  }
+
   function startBake(form) {
     var f = form.elements;
     var temp = parseFloat(f.temp.value);
@@ -1982,8 +2112,7 @@
       case 'mode-plan': view = 'planner'; render(); break;
       case 'mode-full':
         if (state.activeProcessId) { view = 'process'; render(); break; }
-        view = 'planner'; render();
-        toast('A full bake starts from a plan — set the finish time.');
+        view = 'loaf'; render();
         break;
       case 'resume-bulk': view = 'live'; render(); break;
       case 'resume-process': view = 'process'; render(); break;
@@ -2021,6 +2150,60 @@
       case 'st-up': moveStage(id, -1); break;
       case 'st-down': moveStage(id, 1); break;
       case 'st-add': addStageSheet(); break;
+
+      // --------------------------------------------------------- full bake
+      /* `mode-full` from home resumes a running bake; `loaves` always means
+       * the picker, which is what the Back arrow one screen in has to mean. */
+      case 'loaves': view = 'loaf'; render(); break;
+      case 'loaf-pick':
+        var lastF = lastBulkTemp();
+        var loaf = findTemplate(id);
+        var loafBulk = loaf.stages.filter(function (s) { return s.type === 'bulk'; })[0];
+        /* Seed the temperature from what your kitchen actually did last time,
+         * then the loaf's own target, then a plain warm room. */
+        bakeSetup = {
+          templateId: id, startAt: null, fromFridge: true,
+          bulkTempC: lastF != null ? Math.round(lastF * 2) / 2 : loafBulk ? loafBulk.targetTempC : 22
+        };
+        view = 'ready'; render();
+        break;
+      case 't-ready-fridge':
+        bakeSetup.fromFridge = el.getAttribute('aria-checked') !== 'true';
+        render();
+        break;
+      case 'ready-temp':
+        numberSheet({
+          title: 'Bulk temperature', unit: '°C', value: bakeSetup.bulkTempC,
+          step: 0.5, min: M.TEMP_MIN, max: M.TEMP_MAX,
+          hint: 'How warm the dough will sit during bulk. A guess is fine — the tracker corrects it from real readings once the bulk is running.',
+          onSave: function (v) {
+            if (v < M.TEMP_MIN || v > M.TEMP_MAX) {
+              return err('Between ' + M.TEMP_MIN + ' and ' + M.TEMP_MAX + ' °C.');
+            }
+            bakeSetup.bulkTempC = v; closeSheet(); render();
+          }
+        });
+        break;
+      case 'ready-opt':
+        var startNow = Date.now();
+        var readyPlan = P.planForward(findTemplate(bakeSetup.templateId), {
+          startAt: bakeSetup.startAt != null && bakeSetup.startAt > startNow ? bakeSetup.startAt : startNow,
+          bulkTempC: bakeSetup.bulkTempC, fromFridge: bakeSetup.fromFridge
+        });
+        var opt = readyPlan.options.filter(function (o) { return o.kind === id; })[0];
+        if (!opt) break;
+        bakeSetup.startAt = opt.startAt;
+        render(); toast('Moved to ' + clock(opt.startAt) + '. Nothing to do until then.');
+        break;
+      case 'ready-start':
+        if (state.activeProcessId) {
+          confirmSheet('There is a bake running', 'Starting this one abandons the one in progress.', 'Start anyway', function () {
+            var running = activeProcess();
+            endBulkRecord(running); running.status = 'abandoned'; running.finishedAt = Date.now();
+            startForward();
+          });
+        } else startForward();
+        break;
 
       // ---------------------------------------------------------- planner
       case 't-fridge':

@@ -334,6 +334,61 @@ ok('a 04:00 bake time is called out rather than silently planned',
   /puts you in the kitchen at night/.test(text()));
 ok('it names the bake steps that cannot move', /Preheat the oven at 0[0-3]:/.test(text()));
 
+head('FULL BAKE — pick a loaf, start now');
+clickAct('home');
+clickAct('mode-full');
+ok('full bake asks what you are baking, not when you want it out',
+  /What are you baking\?/.test(text()) && !$('#planform'));
+ok('it is a different screen from the planner', !act('mode-plan') || !$('#planform'));
+ok('every loaf is offered as a card', $$('.loaf').length === $$('[data-act="loaf-pick"]').length &&
+  $$('.loaf').length >= 1);
+ok('a loaf card says what it is', /Bruce.s Loaf/.test($('.loaf').textContent));
+ok('and how long it runs', /11 stages · ~\d+ h end to end/.test($('.loaf').textContent));
+ok('there is a way through to editing the loaves', !!act('templates'));
+
+var t0 = Date.now();
+clickAct('loaf-pick');
+ok('picking a loaf goes to the start screen, not the planner',
+  /Start now\?/.test(text()) && !$('#planform'));
+ok('it names the loaf you picked', /Bruce.s Loaf/.test($('.topbar').textContent));
+ok('it leads with the very next thing to do', /First step, straight away/.test(text()));
+ok('and says when the loaf comes out', /Out of the oven/.test(text()));
+ok('the whole bake is listed as a schedule', $$('.planrow').length >= 11 && $$('.planday').length >= 2);
+ok('the preview does not pretend to be draggable', $$('.planrow[data-drag]').length === 0);
+ok('starter defaults to “in the fridge”', act('t-ready-fridge').getAttribute('aria-checked') === 'true');
+
+var firstRow = function () { return $('.planrow .when').textContent; };
+var wasFirst = firstRow(), wasRows = $$('.planrow').length;
+click(act('t-ready-fridge'));
+ok('turning the fridge off drops the revival feeds', $$('.planrow').length < wasRows);
+ok('and the plan still starts now', firstRow() === wasFirst);
+
+clickAct('ready-temp');
+ok('the temperature opens the big number pad', sheet() && $('#numval', sheet()));
+setInput($('#numval', sheet()), '20');
+clickAct('save', sheet());
+ok('a cooler bulk is taken', /Bulk around 20 °C/.test(text()));
+ok('and it lengthens the bulk', /1 ÷ r\(20 °C\)/.test(text()));
+
+clickAct('ready-start');
+ok('starting drops you straight into the stage-by-stage tracker', /Timeline/.test(text()));
+var fwd = function () { var s = JSON.parse(w.localStorage.getItem('bft.v1')); return s.processes.filter(function (p) { return p.id === s.activeProcessId; })[0]; };
+ok('it is a real bake, not a draft', !!fwd() && fwd().status === 'active');
+ok('it was planned forwards from now', Math.abs(fwd().params.startAt - t0) < 60000);
+ok('the forward plan is recorded as such', fwd().params.direction === 'forward');
+ok('the first thing to do is right now', Math.abs(fwd().events[0].plannedStart - t0) < 60000);
+ok('every stage is pre-scheduled, same as a reverse plan',
+  fwd().events.every(function (e) { return e.plannedStart != null; }));
+ok('the bulk length came from the temperature you gave it',
+  Math.abs(fwd().params.bulkHours - w.BFModel.hoursAt(20)) < 1e-9);
+ok('it reuses the same process view', !!act('proc-menu') && !!$('.tlrow'));
+
+clickAct('proc-menu');
+clickAct('proc-abandon', sheet());
+clickAct('yes', sheet());
+ok('abandoning it leaves nothing running',
+  !JSON.parse(w.localStorage.getItem('bft.v1')).activeProcessId);
+
 head('JSON IMPORT ROUND TRIP');
 /* Export the edited template, then import the bytes back and check it survived. */
 var exported = null;
