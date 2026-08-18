@@ -206,3 +206,182 @@ label.field textarea { min-height: 76px; resize: vertical; }
 .note { font-size: 13px; color: var(--muted-2); margin-top: 10px; }
 .center { text-align: center; }
 .spacer { height: 8px; }
+
+/* ================================================================= v2
+   Mode picker, template editor, reverse planner, process tracker.
+   Same restraint as the rest: one accent, big taps, nothing that blinks. */
+
+/* ------------------------------------------------------------ home */
+.modes { display: grid; gap: 10px; }
+.mode {
+  display: block; width: 100%; text-align: left;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 15px 16px; min-height: var(--tap);
+}
+.mode:active { background: var(--surface-2); }
+.mode b { display: block; font-size: 17px; font-weight: 650; }
+.mode em { display: block; font-style: normal; font-size: 13.5px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+
+.resume {
+  display: block; width: 100%; text-align: left; margin-bottom: 12px;
+  background: var(--surface); border: 1px solid var(--accent-dim);
+  border-radius: var(--radius); padding: 14px 16px;
+}
+.resume:active { background: var(--surface-2); }
+.resume .tag {
+  display: inline-block; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 5px;
+}
+.resume b { display: block; font-size: 18px; font-weight: 650; }
+.resume em { display: block; font-style: normal; font-size: 14px; color: var(--muted); margin-top: 2px; }
+
+/* --------------------------------------------------- template editor */
+.rowbtns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.rowbtns .btn { width: auto; flex: 1 1 auto; min-width: 88px; }
+
+.stagelist { list-style: none; margin: 0; padding: 0; }
+.stagerow {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: var(--surface); border: 1px solid var(--line-soft);
+  border-radius: 12px; padding: 10px 10px 10px 4px; margin-bottom: 8px;
+}
+.stagerow.bulkrow { border-color: var(--accent-dim); }
+.stagerow .ord {
+  width: 26px; flex: 0 0 auto; text-align: center; padding-top: 3px;
+  color: var(--muted-2); font-size: 13px; font-variant-numeric: tabular-nums;
+}
+.stagerow .body { flex: 1; min-width: 0; padding: 4px 0; }
+.stagerow .body b { display: block; font-size: 15.5px; font-weight: 600; }
+.stagerow .body em {
+  display: block; font-style: normal; font-size: 12.5px;
+  color: var(--muted); margin-top: 2px; line-height: 1.4;
+}
+.stagerow .body em.cue { color: var(--muted-2); }
+.stagerow .body .pill { margin-left: 7px; font-size: 10.5px; vertical-align: 1px; font-weight: 400; }
+.stagerow .movers { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
+.mv {
+  width: 44px; height: 34px; border-radius: 9px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  display: grid; place-items: center; font-size: 15px;
+}
+.mv[disabled] { opacity: .3; }
+.mv:active { background: var(--line-soft); }
+
+.bakestep { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.bakestep input {
+  min-width: 0; padding: 11px 9px; min-height: 48px;
+  background: #0e0c0b; color: var(--text); border: 1px solid var(--line);
+  border-radius: 10px; font: inherit;
+}
+.bakestep input[data-bs="label"] { flex: 1 1 40%; }
+.bakestep input[type="number"] { flex: 0 1 74px; text-align: center; font-variant-numeric: tabular-nums; }
+.bakestep span { font-size: 12.5px; color: var(--muted-2); flex: 0 0 auto; }
+
+/* ---------------------------------------------------------- planner */
+.callout {
+  background: var(--surface); border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--muted-2);
+  border-radius: 10px; padding: 11px 13px; margin-bottom: 10px; font-size: 14px; color: var(--muted);
+}
+.callout.warn { border-left-color: var(--warn); }
+.callout b { display: block; color: var(--text); font-size: 14.5px; font-weight: 600; margin-bottom: 4px; }
+.callout ul { margin: 4px 0 0; padding-left: 17px; }
+.callout li { margin: 4px 0; line-height: 1.45; }
+.linkbtn {
+  background: none; border: 0; padding: 4px 2px; margin-left: 4px;
+  color: var(--accent); font-size: 13.5px; text-decoration: underline; text-underline-offset: 3px;
+}
+.section-title .linkbtn { float: right; text-transform: none; letter-spacing: 0; }
+
+.plan { list-style: none; margin: 0 0 14px; padding: 0; }
+.planday {
+  font-size: 12.5px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--muted-2); margin: 16px 0 6px; padding-bottom: 5px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.planrow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 4px; min-height: 58px;
+  border-bottom: 1px solid var(--line-soft);
+  touch-action: pan-y;                    /* sideways belongs to the drag */
+  user-select: none; -webkit-user-select: none;
+}
+.planrow.sub { padding-left: 20px; }
+.planrow.sub .what b { font-weight: 500; color: var(--muted); }
+.planrow.night { background: #241d0e; border-radius: 8px; }
+.planrow.dragging { background: var(--surface-2); border-radius: 8px; }
+.planrow.shifted .when { color: var(--accent); }
+.planrow .when {
+  width: 54px; flex: 0 0 auto; font-variant-numeric: tabular-nums;
+  font-size: 15.5px; font-weight: 600; color: var(--muted);
+}
+.planrow .what { flex: 1; min-width: 0; }
+.planrow .what b { display: block; font-size: 15px; font-weight: 600; }
+.planrow .what em {
+  display: block; font-style: normal; font-size: 12.5px;
+  color: var(--muted-2); margin-top: 1px; line-height: 1.35;
+}
+.planrow .what em.til { color: var(--muted-2); opacity: .75; }
+.planrow .grip { flex: 0 0 auto; color: var(--line); font-size: 13px; letter-spacing: -2px; }
+
+/* -------------------------------------------------- process tracker */
+.hero .time.small { font-size: clamp(28px, 8.5vw, 38px); line-height: 1.12; margin: 6px 0 4px; }
+
+.subcount {
+  display: flex; align-items: center; gap: 10px; margin: -4px 0 12px;
+  background: var(--surface); border: 1px solid var(--line-soft);
+  border-radius: 12px; padding: 8px 10px 8px 13px;
+}
+.subcount.due { border-color: var(--accent); }
+.subcount .k { flex: 1; font-size: 14.5px; font-weight: 550; }
+.subcount .v { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.subcount .btn { width: auto; flex: 0 0 auto; min-height: 44px; padding: 0 14px; }
+
+.doing {
+  background: var(--surface); border: 1px solid var(--line-soft);
+  border-radius: 12px; padding: 13px 14px; margin-bottom: 10px;
+  font-size: 15.5px; line-height: 1.5;
+}
+.cuebox {
+  border: 1px solid var(--line-soft); border-radius: 12px;
+  padding: 11px 14px 12px; margin-bottom: 12px; color: var(--muted);
+}
+.cuebox .lede { font-weight: 600; color: var(--text); font-size: 13.5px; margin-bottom: 4px; }
+.cuebox ul { margin: 0; padding-left: 17px; }
+.cuebox li { margin: 3px 0; font-size: 14px; }
+.cuebox .note { margin-top: 8px; }
+
+.nextup {
+  background: var(--surface); border: 1px solid var(--line-soft);
+  border-radius: 12px; padding: 11px 14px; margin: 4px 0 6px;
+}
+.nextup .k { font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted-2); }
+.nextup b { display: block; font-size: 16px; font-weight: 600; margin-top: 2px; }
+.nextup em { display: block; font-style: normal; font-size: 13px; color: var(--muted); margin-top: 1px; }
+
+.timeline { list-style: none; margin: 0; padding: 0; }
+.tlrow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 2px; min-height: 54px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.tlrow.sub { padding-left: 18px; }
+.tlrow.sub .what b { font-weight: 500; }
+.tlrow.done { opacity: .48; }
+.tlrow.running { background: var(--surface); border-radius: 8px; padding-left: 10px; }
+.tlrow.running .what b { color: var(--accent); }
+.tlrow.due .what b { color: var(--warn); }
+.tlrow .when {
+  width: 58px; flex: 0 0 auto; font-variant-numeric: tabular-nums;
+  font-size: 15px; color: var(--muted);
+}
+.tlrow .when em { display: block; font-style: normal; font-size: 11px; color: var(--muted-2); }
+.tlrow .what { flex: 1; min-width: 0; }
+.tlrow .what b { display: block; font-size: 15px; font-weight: 600; }
+.tlrow .what em {
+  display: block; font-style: normal; font-size: 12.5px;
+  color: var(--muted-2); margin-top: 1px; line-height: 1.35;
+}
+.tlrow .what em.cue { color: var(--muted); }
+.tlrow .edit { min-width: 52px; min-height: 46px; border-radius: 10px; background: transparent; border: 1px solid var(--line-soft); font-size: 13.5px; }
+.timeline.compact .tlrow { min-height: 44px; padding: 7px 2px; }
