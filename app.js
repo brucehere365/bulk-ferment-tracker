@@ -16,7 +16,7 @@
     return {
       version: 2, activeId: null, bakes: [],
       templates: [P.defaultTemplate()], processes: [], activeProcessId: null, draft: null,
-      settings: { leadMin: 30, sound: true, notify: false, wakeLock: true, useJar: true }
+      settings: { leadMin: 30, sound: true, notify: false, wakeLock: true, useJar: true, night: 'auto' }
     };
   }
   var state = load();
@@ -80,6 +80,22 @@
   }
   function n1(v) { return (Math.round(v * 10) / 10).toString(); }
 
+  /* Night is the same layout dimmed, not a different app. Auto flips it
+   * between 23:00 and 06:00 — the hours this thing actually gets read in. */
+  function isNight() {
+    var mode = state.settings.night || 'auto';
+    if (mode === 'on') return true;
+    if (mode === 'off') return false;
+    var h = new Date().getHours();
+    return h >= 23 || h < 6;
+  }
+  function applyTheme() {
+    var night = isNight();
+    document.documentElement.classList.toggle('night', night);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', night ? '#191614' : '#F7F1E8');
+  }
+
   var toastTimer;
   function toast(msg) {
     var el = document.getElementById('toast');
@@ -122,8 +138,8 @@
     // rise gridlines + left axis
     var rStep = yMax <= 45 ? 10 : yMax <= 90 ? 20 : yMax <= 140 ? 25 : 50;
     for (var v = 0; v <= yMax; v += rStep) {
-      s.push('<line x1="' + padL + '" y1="' + Y(v).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(v).toFixed(1) + '" stroke="#2a2521" stroke-width="1"/>');
-      s.push('<text x="' + (padL - 5) + '" y="' + (Y(v) + 3.5).toFixed(1) + '" fill="#7d746c" font-size="9.5" text-anchor="end">' + v + '</text>');
+      s.push('<line x1="' + padL + '" y1="' + Y(v).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(v).toFixed(1) + '" class="c-grid" stroke-width="1"/>');
+      s.push('<text x="' + (padL - 5) + '" y="' + (Y(v) + 3.5).toFixed(1) + '" class="c-axis" font-size="9.5" text-anchor="end">' + v + '</text>');
     }
     // time ticks
     var hSpan = span / H;
@@ -131,63 +147,64 @@
     var base = new Date(t0); base.setMinutes(0, 0, 0);
     for (var t = base.getTime(); t <= tEnd; t += stepH * H) {
       if (t < t0) continue;
-      s.push('<line x1="' + X(t).toFixed(1) + '" y1="' + padT + '" x2="' + X(t).toFixed(1) + '" y2="' + (HT - padB) + '" stroke="#221e1b" stroke-width="1"/>');
-      s.push('<text x="' + X(t).toFixed(1) + '" y="' + (HT - padB + 13) + '" fill="#7d746c" font-size="9.5" text-anchor="middle">' + clock(t) + '</text>');
+      s.push('<line x1="' + X(t).toFixed(1) + '" y1="' + padT + '" x2="' + X(t).toFixed(1) + '" y2="' + (HT - padB) + '" class="c-vgrid" stroke-width="1"/>');
+      s.push('<text x="' + X(t).toFixed(1) + '" y="' + (HT - padB + 13) + '" class="c-axis" font-size="9.5" text-anchor="middle">' + clock(t) + '</text>');
     }
 
     // target band — moves vertically with the current temperature
     var bandLo = Y(st.target * 1.04), bandHi = Y(st.target * 0.96);
-    s.push('<rect x="' + padL + '" y="' + bandLo.toFixed(1) + '" width="' + (W - padL - padR) + '" height="' + Math.max(3, bandHi - bandLo).toFixed(1) + '" fill="#ff8f3f" opacity="0.13"/>');
-    s.push('<line x1="' + padL + '" y1="' + Y(st.target).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(st.target).toFixed(1) + '" stroke="#ff8f3f" stroke-width="1" opacity="0.5" stroke-dasharray="1 3"/>');
-    s.push('<text x="' + (padL + 3) + '" y="' + (Y(st.target) - 4).toFixed(1) + '" fill="#c9834c" font-size="9.5">target ' + Math.round(st.target) + '%</text>');
+    s.push('<rect x="' + padL + '" y="' + bandLo.toFixed(1) + '" width="' + (W - padL - padR) + '" height="' + Math.max(3, bandHi - bandLo).toFixed(1) + '" class="c-band"/>');
+    s.push('<line x1="' + padL + '" y1="' + Y(st.target).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(st.target).toFixed(1) + '" class="c-target" stroke-width="1" stroke-dasharray="3 5"/>');
+    s.push('<text x="' + (padL + 3) + '" y="' + (Y(st.target) - 4).toFixed(1) + '" class="c-target-text" font-size="9.5">target ' + Math.round(st.target) + '%</text>');
 
     // temperature, right axis — subdued context
-    s.push('<path d="' + path(ser.history, function (p) { return Y2(p.temp); }) + '" fill="none" stroke="#79a7c4" stroke-width="1.2" opacity="0.75" stroke-linejoin="round"/>');
+    s.push('<path d="' + path(ser.history, function (p) { return Y2(p.temp); }) + '" fill="none" class="c-temp" stroke-width="1.2" stroke-linejoin="round"/>');
     ser.tempMarks.forEach(function (m) {
-      s.push('<rect x="' + (X(m.t) - 2).toFixed(1) + '" y="' + (Y2(m.temp) - 2).toFixed(1) + '" width="4" height="4" fill="#79a7c4" opacity="0.95"/>');
+      s.push('<rect x="' + (X(m.t) - 2).toFixed(1) + '" y="' + (Y2(m.temp) - 2).toFixed(1) + '" width="4" height="4" class="c-temp-mark"/>');
     });
     [tMin + (tMax - tMin) * 0.12, (tMin + tMax) / 2, tMax - (tMax - tMin) * 0.12].forEach(function (tv) {
-      s.push('<text x="' + (W - padR + 4) + '" y="' + (Y2(tv) + 3.5).toFixed(1) + '" fill="#5d7c91" font-size="9.5">' + n1(Math.round(tv * 2) / 2) + '°</text>');
+      s.push('<text x="' + (W - padR + 4) + '" y="' + (Y2(tv) + 3.5).toFixed(1) + '" class="c-temp-axis" font-size="9.5">' + n1(Math.round(tv * 2) / 2) + '°</text>');
     });
 
     // modelled rise so far
-    s.push('<path d="' + path(ser.history, function (p) { return Y(p.rise); }) + '" fill="none" stroke="#ff8f3f" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>');
+    s.push('<path d="' + path(ser.history, function (p) { return Y(p.rise); }) + '" fill="none" class="c-rise" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>');
 
     // projection
     if (ser.projection.length && !opts.historic) {
-      s.push('<path d="' + path(ser.projection, function (p) { return Y(p.rise); }) + '" fill="none" stroke="#ff8f3f" stroke-width="2" stroke-dasharray="5 4" opacity="0.8"/>');
+      s.push('<path d="' + path(ser.projection, function (p) { return Y(p.rise); }) + '" fill="none" class="c-proj" stroke-width="2" stroke-dasharray="4 6" stroke-linecap="round"/>');
     }
 
     // jar readings
     ser.observed.forEach(function (o) {
-      s.push('<circle cx="' + X(o.t).toFixed(1) + '" cy="' + Y(o.rise).toFixed(1) + '" r="4.6" fill="#12100e" stroke="#ffd166" stroke-width="2.2"/>');
+      s.push('<circle cx="' + X(o.t).toFixed(1) + '" cy="' + Y(o.rise).toFixed(1) + '" r="4.6" class="c-jar" stroke-width="2.2"/>');
     });
 
     // now
-    s.push('<line x1="' + X(now).toFixed(1) + '" y1="' + padT + '" x2="' + X(now).toFixed(1) + '" y2="' + (HT - padB) + '" stroke="#f6f0e7" stroke-width="1" opacity="0.45" stroke-dasharray="2 3"/>');
-    s.push('<text x="' + X(now).toFixed(1) + '" y="' + (padT - 4) + '" fill="#a49a90" font-size="9.5" text-anchor="' + (opts.historic ? 'end' : 'middle') + '">' + (opts.historic ? 'end' : 'now') + '</text>');
+    s.push('<line x1="' + X(now).toFixed(1) + '" y1="' + padT + '" x2="' + X(now).toFixed(1) + '" y2="' + (HT - padB) + '" class="c-now" stroke-width="1" stroke-dasharray="2 3"/>');
+    s.push('<text x="' + X(now).toFixed(1) + '" y="' + (padT - 4) + '" class="c-now-text" font-size="9.5" text-anchor="' + (opts.historic ? 'end' : 'middle') + '">' + (opts.historic ? 'end' : 'now') + '</text>');
 
     // predicted end
     if (st.predictedEnd >= t0 && st.predictedEnd <= tEnd) {
       var xe = X(st.predictedEnd), ye = Y(st.target);
-      s.push('<line x1="' + xe.toFixed(1) + '" y1="' + ye.toFixed(1) + '" x2="' + xe.toFixed(1) + '" y2="' + (HT - padB) + '" stroke="#ff8f3f" stroke-width="1" opacity="0.45"/>');
-      s.push('<circle cx="' + xe.toFixed(1) + '" cy="' + ye.toFixed(1) + '" r="4" fill="#ff8f3f"/>');
+      s.push('<line x1="' + xe.toFixed(1) + '" y1="' + ye.toFixed(1) + '" x2="' + xe.toFixed(1) + '" y2="' + (HT - padB) + '" class="c-end" stroke-width="1"/>');
+      s.push('<circle cx="' + xe.toFixed(1) + '" cy="' + ye.toFixed(1) + '" r="4" class="c-end-dot"/>');
       var right = xe > W * 0.6;
-      s.push('<text x="' + (right ? xe - 6 : xe + 6).toFixed(1) + '" y="' + (ye + 15).toFixed(1) + '" fill="#ff8f3f" font-size="10.5" font-weight="600" text-anchor="' + (right ? 'end' : 'start') + '">' + clock(st.predictedEnd) + '</text>');
+      s.push('<text x="' + (right ? xe - 6 : xe + 6).toFixed(1) + '" y="' + (ye + 15).toFixed(1) + '" class="c-end-text" font-size="10.5" text-anchor="' + (right ? 'end' : 'start') + '">' + clock(st.predictedEnd) + '</text>');
     }
     s.push('</svg>');
 
     return '<div class="chartwrap">' + s.join('') +
       '<div class="legend">' +
-      '<span><i style="border-color:#ff8f3f"></i>rise %</span>' +
-      (opts.historic ? '' : '<span><i style="border-color:#ff8f3f;border-top-style:dashed"></i>projected</span>') +
-      (ser.observed.length ? '<span><i style="border:2px solid #ffd166;border-radius:50%;width:8px;height:8px;vertical-align:-1px"></i>jar reading</span>' : '') +
-      '<span><i style="border-color:#79a7c4"></i>dough temp</span>' +
+      '<span><i style="border-color:var(--ink)"></i>rise %</span>' +
+      (opts.historic ? '' : '<span><i style="border-color:var(--muted-2);border-top-style:dashed"></i>projected</span>') +
+      (ser.observed.length ? '<span><i style="border:2px solid var(--accent);border-radius:50%;width:8px;height:8px;vertical-align:-1px"></i>jar reading</span>' : '') +
+      '<span><i style="border-color:var(--temp-line)"></i>dough temp</span>' +
       '</div></div>';
   }
 
   // ---------------------------------------------------------------- views
   var view = 'home';
+  var lastView = null;
   var openBakeId = null;
   var editingTemplateId = null;
   var timelineOpen = true;
@@ -203,12 +220,34 @@
     process: function () { return processView(activeProcess()); }
   };
 
+  /* The floating pill is the only persistent chrome. Its third slot is
+   * contextual: settings while something is running, the process library
+   * otherwise — one icon, never two meanings on screen at once. */
+  var NAV_VIEWS = { home: 1, live: 1, process: 1, history: 1, templates: 1 };
+  function navPill() {
+    var menuAct = view === 'process' ? 'proc-menu' : view === 'live' ? 'menu' : 'templates';
+    var menuLabel = menuAct === 'templates' ? 'Processes and templates' : 'Menu';
+    function b(cls, act, label, current) {
+      return '<button class="' + cls + '" data-act="' + act + '" aria-label="' + label + '"' +
+        (current ? ' aria-current="true"' : '') + '><i></i></button>';
+    }
+    return '<nav class="navpill" aria-label="Main">' +
+      b('n-home', 'home', 'Home', view === 'home' || view === 'live' || view === 'process') +
+      b('n-hist', 'history', 'History', view === 'history') +
+      b('n-menu', menuAct, menuLabel, view === 'templates') +
+      '</nav>';
+  }
+
   function render() {
     var app = document.getElementById('app');
     if (view === 'live' && !activeBake()) view = 'home';
     if (view === 'process' && !activeProcess()) view = 'home';
     if (view === 'editor' && !findTemplate(editingTemplateId)) view = 'templates';
-    app.innerHTML = (VIEWS[view] || VIEWS.home)();
+    applyTheme();
+    /* Entrance animations belong to arriving at a view, not to the clock. */
+    app.className = view === lastView ? '' : 'enter';
+    lastView = view;
+    app.innerHTML = (VIEWS[view] || VIEWS.home)() + (NAV_VIEWS[view] ? navPill() : '');
     bindAll(app);
     var awake = view === 'live' || view === 'process';
     if (awake) { syncAlerts(); ensureWakeLock(); } else { clearTimers(); releaseWakeLock(); }
@@ -221,18 +260,18 @@
     var proc = activeProcess();
     var bulk = activeBake();
     return '' +
-      '<div class="topbar"><h1>Sourdough<span class="sub">The clock is a suggestion.</span></h1>' +
-      (state.bakes.length || state.processes.length ? '<button class="iconbtn" data-act="history">History</button>' : '') + '</div>' +
+      '<div class="topbar"><h1><span class="sub">' + new Date().toLocaleDateString(undefined, { weekday: 'long' }) +
+      ' · the clock is a suggestion</span>Track my <b>loaf</b>' +
+      '</h1></div>' +
       (proc ? resumeCard('process', proc) : '') +
       (bulk && !proc ? resumeCard('bulk', bulk) : '') +
       '<div class="section-title">' + (proc || bulk ? 'Or start something else' : 'What are you doing?') + '</div>' +
       '<div class="modes">' +
-      modeCard('mode-full', 'Full bake', 'Run the whole process, starter feed to oven, ticking stages off as you go.') +
-      modeCard('mode-plan', 'Plan backwards', 'Say when you want bread out of the oven. Get a schedule that works back from it.') +
-      modeCard('mode-bulk', 'Bulk ferment only', 'Just the temperature-driven bulk tracker. Log temps, watch the prediction move.') +
+      modeCard('mode-full', 'Full bake', 'Every stage, starter feed to oven-out. It keeps the clock.') +
+      modeCard('mode-plan', 'Plan backwards', 'Tell it when the loaf leaves the oven.') +
+      modeCard('mode-bulk', 'Bulk ferment only', 'One stage, watched closely by temperature.') +
       '</div>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn small ghost" data-act="templates">Processes &amp; templates</button>';
+      '<p class="note center">The clock is a suggestion. The dough decides.</p>';
   }
 
   function modeCard(act, title, body) {
@@ -258,7 +297,7 @@
     var has = state.bakes.length > 0;
     return '' +
       '<div class="topbar"><button class="iconbtn" data-act="home">Back</button>' +
-      '<h1>Bulk ferment<span class="sub">The clock is a suggestion.</span></h1>' +
+      '<h1><span class="sub">The dough decides</span>Bulk <b>ferment</b></h1>' +
       (has ? '<button class="iconbtn" data-act="history">History</button>' : '') + '</div>' +
       '<div class="hero"><div class="label">No bake running</div>' +
       '<div class="remain" style="margin-top:8px">Take the dough temperature and start the clock.</div></div>' +
@@ -335,7 +374,7 @@
     return '' +
       '<div class="topbar">' +
       '<button class="iconbtn" data-act="home" aria-label="Home">Home</button>' +
-      '<h1>' + esc(bake.name) + '<span class="sub">Started ' + clock(bake.startedAt) + ' · ' + dur(now - bake.startedAt) + ' in</span></h1>' +
+      '<h1><span class="sub">Started ' + clock(bake.startedAt) + ' · ' + dur(now - bake.startedAt) + ' in</span>' + esc(bake.name) + '</h1>' +
       '<button class="iconbtn" data-act="menu" aria-label="Menu">•••</button></div>' +
       hero +
       '<div class="stats">' +
@@ -378,7 +417,8 @@
     if (done.length) body += '<div class="section-title">Bulk ferments</div>' + done.map(bakeCard).join('');
     if (!body) body = '<div class="empty">No finished bakes yet.</div>';
 
-    return '<div class="topbar"><button class="iconbtn" data-act="back">Back</button><h1>History</h1>' +
+    return '<div class="topbar"><button class="iconbtn" data-act="back">Back</button>' +
+      '<h1><span class="sub">History</span>What the dough <b>did last time</b></h1>' +
       (procs.length ? '<button class="iconbtn" data-act="csv-stages">Stages</button>' : '') +
       (done.length || procs.length ? '<button class="iconbtn" data-act="csv">CSV</button>' : '') + '</div>' + body;
   }
@@ -453,7 +493,8 @@
 
   // ------------------------------------------------------- templates view
   function templatesView() {
-    return '<div class="topbar"><button class="iconbtn" data-act="home">Back</button><h1>Processes</h1>' +
+    return '<div class="topbar"><button class="iconbtn" data-act="home">Back</button>' +
+      '<h1><span class="sub">Templates</span>Your <b>processes</b></h1>' +
       '<button class="iconbtn" data-act="tpl-import">Import</button></div>' +
       '<p class="note">A process is an ordered list of stages. Edit them, reorder them, throw stages away. ' +
       'Every number in here is a starting point.</p>' +
@@ -503,7 +544,7 @@
   function editorView(tpl) {
     if (!tpl) return '';
     return '<div class="topbar"><button class="iconbtn" data-act="templates">Back</button>' +
-      '<h1>' + esc(tpl.name) + '<span class="sub">' + tpl.stages.length + ' stages</span></h1>' +
+      '<h1><span class="sub">' + tpl.stages.length + ' stages</span>' + esc(tpl.name) + '</h1>' +
       '<button class="iconbtn" data-act="tpl-meta" data-id="' + tpl.id + '">Name</button></div>' +
       '<ul class="stagelist">' + tpl.stages.map(function (st, i) {
         return '<li class="stagerow' + (st.type === 'bulk' ? ' bulkrow' : '') + '">' +
@@ -822,7 +863,7 @@
       '</form>';
 
     return '<div class="topbar"><button class="iconbtn" data-act="home">Back</button>' +
-      '<h1>Plan backwards<span class="sub">From the oven, not from the mix.</span></h1></div>' +
+      '<h1><span class="sub">Plan backwards</span>When should the loaf <b>leave the oven?</b></h1></div>' +
       form + (d ? draftBlock(d) : '');
   }
 
@@ -1036,9 +1077,9 @@
     var inBulk = cur && cur.type === 'bulk' && rec && rec.readings.length;
 
     var head = '<div class="topbar">' +
-      '<h1>' + esc(proc.name) + '<span class="sub">' + esc(proc.template.name) +
+      '<h1><span class="sub">' + esc(proc.template.name) +
       (tl.started ? ' · ' + tl.chain.filter(function (e) { return e.actualEnd != null; }).length + '/' + tl.chain.length + ' done' : ' · not started') +
-      '</span></h1>' +
+      '</span>' + esc(proc.name) + '</h1>' +
       '<button class="iconbtn" data-act="home" aria-label="Home">Home</button>' +
       '<button class="iconbtn" data-act="proc-menu" aria-label="Menu">•••</button></div>';
 
@@ -1090,22 +1131,22 @@
 
     var hero;
     if (!running) {
-      hero = '<div class="hero"><div class="label">Up now</div>' +
+      hero = '<div class="hero now"><div class="label">Up now</div>' +
         '<div class="time small">' + esc(cur.name) + '</div>' +
         '<div class="remain">' + (tl.started ? 'Planned for ' + clock(cur.start) + dayTag(cur.start, now) : 'Start when you are ready.') + '</div></div>';
     } else if (cur.type === 'bulk' && st) {
       hero = st.ready
-        ? '<div class="hero ready"><div class="label">' + esc(cur.name) + '</div>' +
+        ? '<div class="hero now ready"><div class="label">' + esc(cur.name) + '</div>' +
           '<div class="time">Ready — go read the dough.</div>' +
           '<div class="remain">Hit 100% ' + dur(now - st.predictedEnd) + ' ago. It is still your call.</div></div>'
-        : '<div class="hero"><div class="label">' + esc(cur.name) + ' ends about</div>' +
+        : '<div class="hero now"><div class="label">' + esc(cur.name) + ' ends about</div>' +
           '<div class="time">' + clock(st.predictedEnd) + '</div>' +
           '<div class="remain"><strong>' + dur(st.msRemaining) + '</strong> to go' + dayTag(st.predictedEnd, now) +
           ' · ' + Math.round(st.progress * 100) + '% through</div></div>';
     } else {
       var left = cur.end - now;
       var over = left <= 0;
-      hero = '<div class="hero' + (over ? ' ready' : '') + '"><div class="label">' + esc(cur.name) +
+      hero = '<div class="hero now' + (over ? ' ready' : '') + '"><div class="label">' + esc(cur.name) +
         (timed ? (over ? ' — time is up' : ' ends at') : '') + '</div>' +
         (timed && !over ? '<div class="time">' + clock(cur.end) + '</div>' : '<div class="time small">' + (over ? 'Ready when you are.' : dur(now - cur.start) + ' in') + '</div>') +
         '<div class="remain">' + (timed && !over ? '<strong>' + dur(left) + '</strong> to go' : 'Running ' + dur(now - cur.start)) +
@@ -1243,6 +1284,8 @@
       '<button class="switch" role="switch" aria-checked="' + !!s.wakeLock + '" data-act="t-wake"><i></i></button></div>' +
       '<label class="field">Lead-time alert, minutes before a stage ends' +
       '<input id="lead" type="number" inputmode="numeric" step="5" min="0" max="180" value="' + s.leadMin + '"></label>' +
+      '<div class="section-title">Night</div>' +
+      nightChoices() +
       '<div class="spacer"></div>' +
       '<button class="btn small ghost" data-act="proc-ics">Export the rest of this bake as .ics</button>' +
       '<div class="spacer"></div>' +
@@ -1281,6 +1324,18 @@
       });
   }
 
+  /* Auto is the honest default — the app knows what time it is. The manual
+   * pins exist because a dark kitchen at 18:00 in December is a real thing. */
+  function nightChoices() {
+    var cur = state.settings.night || 'auto';
+    return '<div class="choices three">' + [
+      ['auto', 'Auto 23–06'], ['off', 'Day'], ['on', 'Night']
+    ].map(function (o) {
+      return '<button class="btn small" data-act="night" data-id="' + o[0] + '"' +
+        ' aria-pressed="' + (cur === o[0]) + '">' + o[1] + '</button>';
+    }).join('') + '</div>';
+  }
+
   // --------------------------------------------------------------- sheets
   function openSheet(html, onMount) {
     var root = document.getElementById('sheet-root');
@@ -1299,18 +1354,17 @@
       (opts.hint ? '<p class="hint">' + esc(opts.hint) + '</p>' : '') +
       (opts.extraHTML || '') +
       '<div class="numrow">' +
-      '<button type="button" data-act="dec" aria-label="Decrease">−</button>' +
-      '<input id="numval" type="number" inputmode="decimal" step="' + opts.step + '" value="' + (opts.value == null ? '' : opts.value) + '">' +
-      '<button type="button" data-act="inc" aria-label="Increase">+</button>' +
+      '<input id="numval" type="text" inputmode="decimal" autocomplete="off" ' +
+      'value="' + (opts.value == null ? '' : opts.value) + '">' +
+      '<span class="unit">' + esc(opts.unit) + '</span>' +
       '</div>' +
-      '<div class="center hint">' + esc(opts.unit) + '</div>' +
+      keypad() +
       '<div class="err" id="sheeterr"></div>' +
       '<div class="row">' +
       '<button class="btn ghost" data-act="cancel">Cancel</button>' +
       '<button class="btn primary" data-act="save">Save</button></div>';
     openSheet(html, function (sheet) {
       var input = sheet.querySelector('#numval');
-      setTimeout(function () { input.focus(); input.select(); }, 60);
       sheet.addEventListener('click', function (e) {
         var act = e.target.dataset.act;
         if (act === 'inc' || act === 'dec') {
@@ -1326,8 +1380,33 @@
           opts.onSave(val, sheet);
         }
       });
+      /* The field opens on the last reading as a starting point, so the first
+       * key typed replaces it rather than appending to it. */
+      var fresh = true;
+      sheet.addEventListener('click', function (e) {
+        var key = e.target.closest('[data-key]');
+        if (!key) return;
+        var ch = key.dataset.key;
+        if (fresh && ch !== 'del') input.value = '';
+        fresh = false;
+        var cur = input.value;
+        if (ch === 'del') input.value = cur.slice(0, -1);
+        else if (ch === '.') { if (cur.indexOf('.') < 0) input.value = (cur || '0') + '.'; }
+        else input.value = cur === '0' ? ch : cur + ch;
+      });
+      input.addEventListener('input', function () { fresh = false; });
       input.addEventListener('keydown', function (e) { if (e.key === 'Enter') sheet.querySelector('[data-act="save"]').click(); });
     });
+  }
+
+  /* Every temperature in the app comes through here, so the keys are 70px
+   * and the value is big enough to read with the phone flat on the counter. */
+  function keypad() {
+    var keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'del'];
+    return '<div class="keypad">' + keys.map(function (k) {
+      return '<button type="button" class="' + (k === 'del' ? 'del' : '') + '" data-key="' + k + '"' +
+        (k === 'del' ? ' aria-label="Delete"' : '') + '>' + (k === 'del' ? '\u232B' : k) + '</button>';
+    }).join('') + '</div>';
   }
   function err(msg) {
     var el = document.getElementById('sheeterr');
@@ -1491,6 +1570,8 @@
       '<input id="lead" type="number" inputmode="numeric" step="5" min="0" max="180" value="' + s.leadMin + '"></label>' +
       '<div class="spacer"></div>' +
       '<button class="btn small ghost" data-act="testalarm">Test the alarm</button>' +
+      '<div class="section-title">Night</div>' +
+      nightChoices() +
       '<div class="section-title">Bake</div>' +
       '<div class="toggle"><div class="t">Aliquot jar' +
       '<em>' + (usesJar(activeBake()) ? 'Rise button and calibration are showing.' : 'Hidden. Temperature alone is driving the prediction.') + '</em></div>' +
@@ -2013,6 +2094,15 @@
           bake.readings.forEach(function (r) { if (r.rise != null) r.ignoreCal = true; });
           save(); render(); toast('Back to the table.');
         });
+        break;
+      case 'night':
+        state.settings.night = id; save();
+        var open = document.querySelector('#sheet-root .sheet');
+        if (open) open.querySelectorAll('[data-act="night"]').forEach(function (b) {
+          b.setAttribute('aria-pressed', b.dataset.id === id);
+        });
+        render();
+        toast(id === 'auto' ? 'Night switches itself on at 23:00.' : id === 'on' ? 'Night on.' : 'Day on.');
         break;
     }
   }
