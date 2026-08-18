@@ -1,7 +1,8 @@
 # CLAUDE.md
 
-Sourdough process & bulk ferment tracker. A static single-page app for running a
-real bake — used on a phone, in a kitchen, at odd hours.
+**TrackMyLoaf** — sourdough process & bulk ferment tracker. A static
+single-page app for running a real bake — used on a phone, in a kitchen, at odd
+hours.
 
 ## How this project ships
 
@@ -35,11 +36,17 @@ runtime. Two pure modules and one UI file.
 | `model.js` | Fermentation model. Pure. `window.BFModel` / `require`. |
 | `process.js` | Templates, reverse planner, timeline projection, `.ics`. Pure. `window.BFProcess`. |
 | `app.js` | All UI and all storage. The only file that touches the DOM or `localStorage`. |
-| `styles.css` | Dark, one accent colour. |
+| `styles.css` | The whole design system: tokens, day and night themes, line art. |
 
 The pure modules take `now` as a parameter and own no clocks, no DOM and no
 storage. That is what makes them testable in node and what lets the UI recompute
 everything from stored timestamps after the phone has been asleep.
+
+The one external dependency is Google Fonts (Outfit, Space Mono, Instrument
+Serif). Every stack has a real fallback — a kitchen with no signal still gets a
+readable app. All other visuals are flat colour, gradients, or inline SVG; the
+line illustrations are CSS `mask` data-URIs in `styles.css`, so they inherit
+whatever ink colour their card uses and work unchanged in the night theme.
 
 State lives entirely in `localStorage` under the key `bft.v1` (the key kept its
 name through the v2 schema bump). There is no backend and no accounts.
@@ -69,6 +76,15 @@ name through the v2 schema bump). There is no backend and no accounts.
 6. **The reverse planner does not silently produce a plan that has you shaping
    at 3am.** If the cold proof cannot absorb it, say so and offer costed
    alternatives.
+7. **Entrance animations are gated behind `#app.enter`.** The live views
+   re-render once a second from stored timestamps (invariant 2), so any
+   unguarded entrance animation restarts every second — the hero would pulse,
+   the chart would redraw itself, the progress bar would sweep from zero.
+   `render()` adds `enter` only when the view actually changes. Anything that
+   animates on arrival goes under that selector.
+8. **Cue lists are instructions, not a checklist.** Small print you read before
+   you decide. Nothing to tick — the tap that ends a stage is the primary
+   button, and there is only ever one of those.
 
 ## The three modes
 
@@ -155,3 +171,9 @@ throughout — equivalent in browsers and testable.
 * Tone in user-facing copy: plain, calm, never chirpy. "The clock is a
   suggestion. The dough decides." No dashboards, no exclamation marks, nothing
   that blinks. This gets read one-handed at 3am.
+* Colour carries meaning and never decorates: periwinkle progress, dusty pink
+  dough temp, butter targets, sage ready/expected, pale blue in-flight,
+  terracotta at most once per screen. A hue means the same thing on every view.
+* Night is the same layout dimmed, not a second design. Auto between 23:00 and
+  06:00, with Day/Night pins in the menu; `html.night` re-points the tokens and
+  nothing else.
