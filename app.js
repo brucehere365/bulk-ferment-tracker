@@ -8,34 +8,160 @@
   var M = window.BFModel;
   var H = M.MS_PER_HOUR;
   var KEY = 'bft.v1';
+  var PREV = 'bft.v1.prev';       // the write before the current one
+  var QUAR = 'bft.v1.corrupt';    // a payload that would not parse, kept rather than dropped
 
-  // ------------------------------------------------------------- storage
+  /* ----------------------------------------------------------- storage
+   * Losing a bake mid-bulk is the one failure this app is not allowed to
+   * have, and every way it has actually happened was storage-shaped:
+   *
+   *   - one key, so a single bad write took everything with it;
+   *   - a read error falling through to a blank state, which the next save
+   *     then wrote over the top of — the loss made permanent one line later;
+   *   - one origin, so a different URL, or a Home Screen icon beside a Safari
+   *     tab, is a different empty app holding none of your bakes.
+   *
+   * So: every write leaves the copy it replaced behind, a payload that will
+   * not parse is quarantined instead of overwritten, a write that does not
+   * read back is reported rather than assumed, and the whole state is
+   * mirrored into IndexedDB so a cleared localStorage is still recoverable.
+   * None of that helps across origins — that is what the JSON backup is for,
+   * and why it is reachable from the screen you land on with nothing. */
+
   function blank() {
     return {
-      version: 3, activeId: null, bakes: [],
+      version: 3, activeId: null, bakes: [], savedAt: 0,
       settings: { leadMin: 30, sound: true, notify: false, wakeLock: true, useJar: true, night: 'auto' }
     };
   }
-  var state = load();
-  function load() {
-    try {
-      var raw = localStorage.getItem(KEY);
-      if (!raw) return blank();
-      var s = JSON.parse(raw);
-      var d = blank();
-      s.settings = Object.assign(d.settings, s.settings || {});
-      s.bakes = s.bakes || [];
-      /* v2 carried recipe templates and multi-stage bakes alongside the bulk
-       * ferments. Those are gone; the bulk ferments they wrapped are ordinary
-       * bakes and stay exactly as they were. */
-      delete s.templates; delete s.processes; delete s.activeProcessId; delete s.draft;
-      s.version = 3;
-      return s;
-    } catch (e) { console.warn('Could not read saved state, starting fresh.', e); return blank(); }
+
+  /* v2 carried recipe templates and multi-stage bakes alongside the bulk
+   * ferments. Those are gone; the bulk ferments they wrapped are ordinary
+   * bakes and stay exactly as they were. */
+  function normalize(s) {
+    var d = blank();
+    s.settings = Object.assign(d.settings, s.settings || {});
+    s.bakes = s.bakes || [];
+    delete s.templates; delete s.processes; delete s.activeProcessId; delete s.draft;
+    s.version = 3;
+    s.savedAt = s.savedAt || 0;
+    return s;
   }
+
+  function readKey(k) {
+    var raw;
+    try { raw = localStorage.getItem(k); }
+    catch (e) { return null; }              // storage blocked outright
+    if (!raw) return null;
+    try { return normalize(JSON.parse(raw)); }
+    catch (e) {
+      /* Keep it. A half-written payload is still most of a bake, and a human
+       * can get it back out of the console; blank() cannot. */
+      if (k === KEY) { try { localStorage.setItem(QUAR, raw); } catch (e2) {} }
+      console.warn('Saved state at ' + k + ' would not parse — kept a copy at ' + QUAR + '.', e);
+      return null;
+    }
+  }
+
+  var bootedEmpty = false;        // nothing was found; do not save over anything yet
+  var recoveredFrom = null;       // which copy we are running on, if not the main one
+  function load() {
+    var s = readKey(KEY);
+    if (!s) { s = readKey(PREV); if (s) recoveredFrom = 'the previous save'; }
+    if (!s) { s = blank(); bootedEmpty = true; }
+    return s;
+  }
+  var state = load();
+
+  var storageBroken = false;
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(state)); }
-    catch (e) { toast('Could not save — storage is full or blocked.'); }
+    state.savedAt = Date.now();
+    var text = JSON.stringify(state);
+    try {
+      var current = localStorage.getItem(KEY);
+      if (current && current !== text) localStorage.setItem(PREV, current);
+      localStorage.setItem(KEY, text);
+      /* A write that does not read back did not happen. Private Browsing and
+       * a full quota both fail here, and both used to fail quietly. */
+      if (localStorage.getItem(KEY) !== text) throw new Error('write did not read back');
+      if (storageBroken) toast('Saving again.');
+      storageBroken = false;
+      bootedEmpty = false;
+    } catch (e) {
+      storageBroken = true;
+      console.error('Could not save state.', e);
+      toast('Not saving — this browser is blocking storage. Export a backup.');
+    }
+    idbPut(text);
+  }
+
+  /* The mirror. Best effort by design: localStorage stays the source of truth
+   * because it is synchronous and the app re-reads it on every render. This
+   * exists purely so that "localStorage got cleared" is survivable. */
+  var idb = null, idbTried = false, idbQueue = [];
+  function idbOpen(cb) {
+    if (idbTried) return cb(idb);
+    if (typeof indexedDB === 'undefined' || !indexedDB) { idbTried = true; return cb(null); }
+    idbQueue.push(cb);
+    if (idbQueue.length > 1) return;        // an open is already in flight
+    var req;
+    try { req = indexedDB.open('bft', 1); }
+    catch (e) { idbTried = true; return flushIdb(null); }
+    req.onupgradeneeded = function () { req.result.createObjectStore('state'); };
+    req.onsuccess = function () { idb = req.result; idbTried = true; flushIdb(idb); };
+    req.onerror = function () { idbTried = true; flushIdb(null); };
+    req.onblocked = function () { idbTried = true; flushIdb(null); };
+  }
+  function flushIdb(db) {
+    var q = idbQueue; idbQueue = [];
+    q.forEach(function (cb) { cb(db); });
+  }
+  function idbPut(text) {
+    idbOpen(function (db) {
+      if (!db) return;
+      try { db.transaction('state', 'readwrite').objectStore('state').put(text, 'current'); }
+      catch (e) { /* the mirror is allowed to fail; localStorage is the record */ }
+    });
+  }
+  function idbGet(cb) {
+    idbOpen(function (db) {
+      if (!db) return cb(null);
+      try {
+        var r = db.transaction('state', 'readonly').objectStore('state').get('current');
+        r.onsuccess = function () { cb(r.result || null); };
+        r.onerror = function () { cb(null); };
+      } catch (e) { cb(null); }
+    });
+  }
+
+  /* On boot, ask the mirror whether it knows more than localStorage does. It
+   * does exactly when localStorage was cleared underneath us — which is the
+   * case this whole layer exists for. */
+  function recoverFromMirror() {
+    idbGet(function (text) {
+      if (!text) return;
+      var m;
+      try { m = normalize(JSON.parse(text)); } catch (e) { return; }
+      var gained = m.bakes.length - state.bakes.length;
+      if ((m.savedAt || 0) <= (state.savedAt || 0) && gained <= 0) return;
+      var wasEmpty = bootedEmpty;
+      state = m;
+      save();
+      view = state.activeId ? 'live' : view;
+      render();
+      toast(wasEmpty
+        ? 'Recovered ' + m.bakes.length + ' bake' + (m.bakes.length === 1 ? '' : 's') + ' from the backup copy.'
+        : 'Restored a newer saved copy.');
+    });
+  }
+
+  /* Chrome and Firefox will exempt an origin from eviction under storage
+   * pressure if you ask. Safari ignores it; adding to the Home Screen is what
+   * does the equivalent there. Cheap either way. */
+  function askForPersistence() {
+    try {
+      if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+    } catch (e) { /* not supported; nothing to fall back to */ }
   }
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
   function activeBake() {
@@ -264,7 +390,12 @@
       '<div class="spacer"></div>' +
       '<button class="btn primary" type="submit">Start bulk</button>' +
       '</form>' +
-      (has ? '<p class="note center">' + state.bakes.length + ' bake' + (state.bakes.length > 1 ? 's' : '') + ' in history.</p>' : '');
+      (has ? '<p class="note center">' + state.bakes.length + ' bake' + (state.bakes.length > 1 ? 's' : '') + ' in history.</p>' : '') +
+      /* Reachable from the screen you land on when a bake has gone missing —
+       * which is the only screen that matters when one has. */
+      '<div class="spacer"></div>' +
+      '<button class="btn small ghost" data-act="storage">' +
+      (has ? 'Backup and restore' : 'Restore from a backup') + '</button>';
   }
 
   function defaultName() {
@@ -327,6 +458,11 @@
       '<button class="iconbtn" data-act="home" aria-label="Home">Home</button>' +
       '<h1><span class="sub">Started ' + clock(bake.startedAt) + ' · ' + dur(now - bake.startedAt) + ' in</span>' + esc(bake.name) + '</h1>' +
       '<button class="iconbtn" data-act="menu" aria-label="Menu">•••</button></div>' +
+      /* A toast you might not be looking at is not enough to tell someone the
+       * bake in front of them is not being written down. */
+      (storageBroken
+        ? '<button class="alarmbar" data-act="storage">Not saving. This browser is blocking storage — ' +
+          'tap to export a backup before you lose this bake.</button>' : '') +
       hero +
       '<div class="stats">' +
       '<div class="stat"><div class="k">Progress</div><div class="v">' + Math.round(st.progress * 100) + '<small>%</small></div>' +
@@ -360,6 +496,7 @@
 
     return '<div class="topbar"><button class="iconbtn" data-act="back">Back</button>' +
       '<h1><span class="sub">History</span>What the dough <b>did last time</b></h1>' +
+      '<button class="iconbtn" data-act="storage">Backup</button>' +
       (done.length ? '<button class="iconbtn" data-act="csv">CSV</button>' : '') + '</div>' +
       (done.length ? done.map(bakeCard).join('') : '<div class="empty">No finished bakes yet.</div>');
   }
@@ -571,6 +708,9 @@
     if (reading.rise != null) bake.useJar = true;   // jar is clearly to hand
     bake.readings.push(reading);
     save(); closeSheet(); render();
+    /* If the write failed, save() has already said so and that is the more
+     * important thing on screen. Never follow it with "Logged." */
+    if (storageBroken) return;
     var after = M.stateAt(bake.readings, Date.now());
     if (!before.empty && !after.ready) {
       var shift = after.predictedEnd - before.predictedEnd;
@@ -650,6 +790,8 @@
       (usesJar(activeBake()) ? '' : '<div class="spacer"></div><button class="btn small ghost" data-act="lograise-once">Log a one-off rise %</button>') +
       '<div class="spacer"></div>' +
       '<button class="btn small ghost" data-act="history">History &amp; export</button>' +
+      '<div class="spacer"></div>' +
+      '<button class="btn small ghost" data-act="storage">Backup and restore</button>' +
       '<div class="spacer"></div>' +
       '<button class="btn small" data-act="finish">Finish this bake</button>' +
       '<div class="spacer"></div>' +
@@ -733,6 +875,104 @@
     toast('Bulk started at ' + n1(temp) + '°C.');
   }
 
+  // ------------------------------------------------------------- backup
+  /* The only copy that survives a new URL, a new phone or a wiped browser.
+   * CSV is for reading afterwards; this is for getting the bake back. */
+  function download(text, filename, mime) {
+    var blob = new Blob([text], { type: mime });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  function exportBackup() {
+    var payload = { app: 'trackmyloaf', version: 3, exportedAt: new Date().toISOString(), state: state };
+    download(JSON.stringify(payload, null, 2),
+      'trackmyloaf-backup-' + new Date().toISOString().slice(0, 10) + '.json', 'application/json');
+    toast('Backup saved — ' + state.bakes.length + ' bake' + (state.bakes.length === 1 ? '' : 's') + '.');
+  }
+
+  /* Merge, never replace. Restoring onto a browser that already has bakes must
+   * not throw them away, and the same bake logged on two phones should end up
+   * as the copy that saw more of it rather than whichever loaded last. */
+  function mergeBackup(incoming) {
+    var byId = {};
+    state.bakes.forEach(function (b) { byId[b.id] = b; });
+    var added = 0, updated = 0;
+    (incoming.bakes || []).forEach(function (b) {
+      if (!b || !b.id) return;
+      var mine = byId[b.id];
+      if (!mine) { state.bakes.push(b); byId[b.id] = b; added++; return; }
+      if ((b.readings || []).length > (mine.readings || []).length) {
+        state.bakes[state.bakes.indexOf(mine)] = b; updated++;
+      }
+    });
+    if (!activeBake() && incoming.activeId && byId[incoming.activeId]) state.activeId = incoming.activeId;
+    save();
+    return { added: added, updated: updated };
+  }
+
+  function importBackup() {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.addEventListener('change', function () {
+      var file = input.files && input.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        var parsed;
+        try { parsed = JSON.parse(reader.result); }
+        catch (e) { return toast('That file is not a TrackMyLoaf backup.'); }
+        var incoming = parsed && parsed.state ? parsed.state : parsed;
+        if (!incoming || !incoming.bakes) return toast('That file has no bakes in it.');
+        var r = mergeBackup(normalize(incoming));
+        closeSheet();
+        view = state.activeId ? 'live' : 'history';
+        render();
+        toast(r.added || r.updated
+          ? 'Restored ' + r.added + ' bake' + (r.added === 1 ? '' : 's') +
+            (r.updated ? ', updated ' + r.updated : '') + '.'
+          : 'Nothing new in that backup — you already have all of it.');
+      };
+      reader.onerror = function () { toast('Could not read that file.'); };
+      reader.readAsText(file);
+    });
+    input.click();
+  }
+
+  /* What the app can actually promise about your data, in plain words. */
+  function storageSheet() {
+    var n = state.bakes.length;
+    openSheet(
+      '<h2>Your bakes</h2>' +
+      '<p class="hint">' + n + ' bake' + (n === 1 ? '' : 's') + ' stored in this browser' +
+      (state.savedAt ? ', last saved ' + clock(state.savedAt) + dayTag(state.savedAt) : '') + '.</p>' +
+      (storageBroken
+        ? '<p class="hint" style="color:var(--danger)">This browser is refusing to save. ' +
+          'Export a backup now — nothing logged since you opened the app is being kept.</p>' : '') +
+      (recoveredFrom ? '<p class="hint">Running on ' + esc(recoveredFrom) + ' — the main copy would not load.</p>' : '') +
+      '<p class="hint">Bakes live in this browser, on this address. A different URL, a different ' +
+      'browser, or the Home Screen icon beside a Safari tab each keep their own. A backup file is ' +
+      'the only thing that moves between them.</p>' +
+      '<div class="spacer"></div>' +
+      '<button class="btn" data-act="backup-export">Export a backup</button>' +
+      '<div class="spacer"></div>' +
+      '<button class="btn ghost" data-act="backup-import">Restore from a backup</button>' +
+      '<div class="spacer"></div>' +
+      '<p class="note">Restoring merges — it adds what is missing and never deletes what is here.</p>',
+      function (sheet) {
+        sheet.addEventListener('click', function (e) {
+          var a = e.target.closest('[data-act]');
+          if (!a) return;
+          if (a.dataset.act === 'backup-export') exportBackup();
+          if (a.dataset.act === 'backup-import') importBackup();
+        });
+      });
+  }
+
   // ---------------------------------------------------------------- CSV
   function exportCSV() {
     var rows = [['bake_id', 'bake_name', 'status', 'started_at', 'notes', 'crumb', 'final_calibration',
@@ -755,12 +995,7 @@
         return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c;
       }).join(',');
     }).join('\n');
-    var blob = new Blob([csv], { type: 'text/csv' });
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'bulk-ferment-' + new Date().toISOString().slice(0, 10) + '.csv';
-    document.body.appendChild(a); a.click();
-    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    download(csv, 'bulk-ferment-' + new Date().toISOString().slice(0, 10) + '.csv', 'text/csv');
     toast('Exported ' + (rows.length - 1) + ' readings.');
   }
   function round(v, n) { var p = Math.pow(10, n); return Math.round(v * p) / p; }
@@ -899,6 +1134,7 @@
         view = state.activeId ? 'live' : 'start';
         openBakeId = null; render(); break;
 
+      case 'storage': closeSheet(); storageSheet(); break;
       case 'csv': exportCSV(); break;
       case 'openbake': openBakeId = id; render(); break;
       case 'closebake': openBakeId = null; render(); break;
@@ -959,8 +1195,13 @@
   }));
 
   /* Persist on boot so the v2 migration is durable even if the first thing you
-   * do is close the tab. */
-  save();
+   * do is close the tab — but never when we booted with nothing. That save
+   * used to run unconditionally, so a single unreadable payload became a
+   * blank state and then, one line later, a permanently blank one. */
+  if (!bootedEmpty) save();
   view = state.activeId ? 'live' : 'start';
   render();
+  askForPersistence();
+  recoverFromMirror();
+  if (recoveredFrom) toast('The main saved copy would not load — running on ' + recoveredFrom + '.');
 })();

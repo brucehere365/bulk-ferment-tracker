@@ -91,8 +91,10 @@ head('BOOT');
 ok('lands straight on the bulk ferment form', !!$('#startform'));
 ok('there is no mode picker left to choose from', !act('mode-bulk') && !act('mode-full') && !act('mode-plan'));
 ok('and nowhere else for the app to be', !act('templates') && !act('loaves'));
-ok('the schema is at v3', stored().version === 3);
-ok('no templates or processes are stored', !('templates' in stored()) && !('processes' in stored()));
+/* Booting with nothing must not write anything: the old unconditional boot
+ * save is what turned an unreadable payload into a permanently blank one. */
+ok('a boot with no data writes nothing at all', w.localStorage.getItem('bft.v1') === null);
+ok('restore is reachable from the empty screen', !!act('storage'));
 
 head('DECIMALS — a comma is a full stop');
 ok('the first-temperature field is not a type=number', $('#startform').elements.temp.type === 'text');
@@ -257,7 +259,146 @@ ok('templates, processes and drafts are dropped',
 ok('settings carry over', s3.settings.leadMin === 45 && s3.settings.sound === false);
 ok('and the version is bumped once', s3.version === 3);
 
-head('SUMMARY');
-console.log((fail ? '  FAILED ' + fail + ' / ' + (pass + fail) + '\n   · ' + failures.join('\n   · ')
-  : '  All ' + pass + ' UI assertions passed.'));
-process.exit(fail ? 1 : 0);
+/* ------------------------------------------------------------------------
+ * Losing a bake is the failure this app is not allowed to have, so these
+ * drive the ways it actually happened rather than asserting on the helpers. */
+
+function goodState(name, readings) {
+  var t = Date.now() - 3600000;
+  return {
+    version: 3, activeId: 'k1', savedAt: t, bakes: [{
+      id: 'k1', name: name, startedAt: t, status: 'active',
+      readings: (readings || [{ id: 'x1', t: t, temp: 24, rise: null, gapTemp: null }]),
+      alerts: { lead: null, end: null }, crumb: '', finalCal: 1, useJar: true
+    }],
+    settings: { leadMin: 30, sound: true, notify: false, wakeLock: true, useJar: true, night: 'auto' }
+  };
+}
+
+head('A CORRUPT PAYLOAD IS NEVER TURNED INTO A BLANK ONE');
+var truncated = JSON.stringify(goodState('Half-written bake')).slice(0, 120);
+var w4 = boot(truncated, 0);
+ok('the app still starts', !!w4.document.querySelector('#startform'));
+ok('the unreadable payload is kept, not dropped',
+  w4.localStorage.getItem('bft.v1.corrupt') === truncated);
+ok('and it is NOT overwritten with a blank state',
+  w4.localStorage.getItem('bft.v1') === truncated,
+  String(w4.localStorage.getItem('bft.v1')).slice(0, 40));
+
+head('THE PREVIOUS COPY IS A REAL FALLBACK');
+var w5 = boot(null, 0);
+w5.localStorage.setItem('bft.v1', '{"bakes":[oops');
+w5.localStorage.setItem('bft.v1.prev', JSON.stringify(goodState('Rescued bake')));
+var w5b = boot(null, 0);
+w5b.localStorage.setItem('bft.v1', '{"bakes":[oops');
+w5b.localStorage.setItem('bft.v1.prev', JSON.stringify(goodState('Rescued bake')));
+['model.js', 'app.js'].forEach(function (f) { w5b.eval(fs.readFileSync(path.join(DIR, f), 'utf8')); });
+ok('a bake in the previous copy is recovered',
+  /Rescued bake/.test(w5b.document.getElementById('app').textContent));
+ok('and the app says it is running on a fallback',
+  /would not load/.test(w5b.document.getElementById('toast').textContent));
+
+head('EVERY SAVE LEAVES THE COPY IT REPLACED BEHIND');
+var w6 = boot(JSON.stringify(goodState('Generation one')), 0);
+var d6 = w6.document;
+d6.querySelector('[data-act="logtemp"]').dispatchEvent(new w6.MouseEvent('click', { bubbles: true }));
+var num6 = d6.querySelector('#sheet-root .sheet #numval');
+num6.value = '25';
+num6.dispatchEvent(new w6.Event('input', { bubbles: true }));
+d6.querySelector('#sheet-root .sheet [data-act="save"]').dispatchEvent(new w6.MouseEvent('click', { bubbles: true }));
+var cur6 = JSON.parse(w6.localStorage.getItem('bft.v1'));
+var prev6 = JSON.parse(w6.localStorage.getItem('bft.v1.prev'));
+ok('the new reading is in the current copy', cur6.bakes[0].readings.length === 2);
+ok('and the copy before it is still there', prev6 && prev6.bakes[0].readings.length === 1);
+
+head('A BROWSER THAT REFUSES TO SAVE SAYS SO');
+var w7 = boot(JSON.stringify(goodState('Doomed bake')), 0);
+var d7 = w7.document;
+/* Private Browsing on iOS throws here. It used to fail into a 2.6s toast and
+ * then behave as though everything was fine.
+ * Patched on Storage.prototype, not on the instance: jsdom's localStorage is a
+ * Proxy whose set trap stores a *key* called "setItem" rather than overriding
+ * the method, so an instance assignment silently does nothing. */
+w7.Storage.prototype.setItem = function () { throw new Error('QuotaExceededError'); };
+d7.querySelector('[data-act="logtemp"]').dispatchEvent(new w7.MouseEvent('click', { bubbles: true }));
+var num7 = d7.querySelector('#sheet-root .sheet #numval');
+num7.value = '26';
+num7.dispatchEvent(new w7.Event('input', { bubbles: true }));
+d7.querySelector('#sheet-root .sheet [data-act="save"]').dispatchEvent(new w7.MouseEvent('click', { bubbles: true }));
+ok('a failed write is reported, not swallowed',
+  /blocking storage/.test(d7.getElementById('toast').textContent),
+  JSON.stringify(d7.getElementById('toast').textContent));
+ok('and it stays on screen rather than fading with the toast',
+  /Not saving\./.test(d7.getElementById('app').textContent));
+ok('the warning is a way through to the backup',
+  d7.querySelector('.alarmbar').dataset.act === 'storage');
+
+/* On the live view the sheet is behind the ••• menu; on the start screen it is
+ * a button in its own right. Both routes matter, so both get walked. */
+function openStorage(win, docu) {
+  var el = docu.querySelector('[data-act="storage"]');
+  if (!el) {
+    docu.querySelector('[data-act="menu"]').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    el = docu.querySelector('#sheet-root .sheet [data-act="storage"]');
+  }
+  el.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  return docu.querySelector('#sheet-root .sheet');
+}
+
+head('BACKUP EXPORT');
+var w8 = boot(JSON.stringify(goodState('Exportable bake')), 0);
+var d8 = w8.document;
+var dl8 = [];
+var realClick8 = w8.HTMLElement.prototype.click;
+w8.HTMLElement.prototype.click = function () {
+  if (this.tagName === 'A' && this.download) { dl8.push(this.download); return; }
+  return realClick8.apply(this, arguments);
+};
+var sheet8 = openStorage(w8, d8);
+ok('the storage sheet says how many bakes are stored',
+  /1 bake stored in this browser/.test(sheet8.textContent), JSON.stringify(sheet8.textContent.slice(0, 80)));
+ok('and warns that bakes do not follow you to another URL',
+  /different URL/.test(sheet8.textContent));
+sheet8.querySelector('[data-act="backup-export"]').dispatchEvent(new w8.MouseEvent('click', { bubbles: true }));
+ok('a backup downloads as JSON', dl8.some(function (n) { return /^trackmyloaf-backup-.*\.json$/.test(n); }),
+  JSON.stringify(dl8));
+
+head('RESTORE MERGES — IT NEVER DELETES WHAT IS ALREADY HERE');
+/* Restoring onto a browser that already has bakes is the normal case after a
+ * URL change, so a restore that replaced state would be its own data loss. */
+var w9 = boot(JSON.stringify(goodState('Bake already here')), 0);
+var d9 = w9.document;
+var captured = null;
+var realCreate = d9.createElement.bind(d9);
+d9.createElement = function (tag) {
+  var el = realCreate(tag);
+  if (tag === 'input') captured = el;
+  return el;
+};
+var sheet9 = openStorage(w9, d9);
+sheet9.querySelector('[data-act="backup-import"]').dispatchEvent(new w9.MouseEvent('click', { bubbles: true }));
+
+var incoming = goodState('Bake from the old URL');
+incoming.bakes[0].id = 'k2';
+incoming.activeId = 'k2';
+var file = new w9.File([JSON.stringify({ app: 'trackmyloaf', version: 3, state: incoming })],
+  'backup.json', { type: 'application/json' });
+Object.defineProperty(captured, 'files', { value: [file] });
+captured.dispatchEvent(new w9.Event('change'));
+
+function finish() {
+  head('SUMMARY');
+  console.log((fail ? '  FAILED ' + fail + ' / ' + (pass + fail) + '\n   · ' + failures.join('\n   · ')
+    : '  All ' + pass + ' UI assertions passed.'));
+  process.exit(fail ? 1 : 0);
+}
+
+/* FileReader is async, so the last assertions and the summary run from here. */
+setTimeout(function () {
+  var s9 = JSON.parse(w9.localStorage.getItem('bft.v1'));
+  ok('the restored bake is added', s9.bakes.filter(function (b) { return b.id === 'k2'; }).length === 1);
+  ok('and the bake already here is still here',
+    s9.bakes.filter(function (b) { return b.id === 'k1'; }).length === 1, JSON.stringify(s9.bakes.map(function (b) { return b.name; })));
+  ok('the running bake is not hijacked by the import', s9.activeId === 'k1');
+  finish();
+}, 150);

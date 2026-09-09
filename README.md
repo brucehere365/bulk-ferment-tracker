@@ -18,6 +18,30 @@ anywhere). Dev files are not part of the site — that is:
 
 All state lives in `localStorage` on the device. No backend, no accounts.
 
+## Not losing a bake
+
+Bakes are stored in the browser, so the app is careful about it:
+
+* Every save keeps the copy it replaced, and falls back to it if the current
+  one will not load.
+* A payload that will not parse is quarantined rather than overwritten, and a
+  boot that finds nothing writes nothing — so one bad write cannot cascade into
+  permanent loss.
+* A write that does not read back is reported on screen and stays there. If the
+  browser is blocking storage, the app says so instead of saying "Logged".
+* Everything is mirrored into IndexedDB. If `localStorage` is cleared, the next
+  load brings the bakes back from the mirror.
+
+**None of that crosses an origin.** `localStorage` belongs to one URL, so a new
+address, a different browser, or an iOS Home Screen icon sitting beside a Safari
+tab each hold their own separate, empty copy of the app. Export a JSON backup
+before changing where the app is hosted — that file is the only thing that moves
+bakes between them. Restoring merges: it adds what is missing and never deletes
+what is already there.
+
+On iOS, Safari also wipes site storage after 7 days of not visiting. Adding the
+app to the Home Screen exempts it from that.
+
 Alerts are scheduled in the page, so the tab has to stay open overnight — that
 is what the screen wake lock toggle is for. Everything on screen is recomputed
 from stored timestamps on wake, so a slept phone loses no progress.

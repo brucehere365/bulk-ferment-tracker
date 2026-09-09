@@ -5,13 +5,24 @@ running a real bake — used on a phone, in a kitchen, at odd hours.
 
 ## How this project ships
 
-**Cloudflare Pages is connected to the GitHub repo.** Pushing to `main` deploys.
-There is no build step, no CI, no `wrangler.toml` — Cloudflare serves the repo
-root as-is.
+**Cloudflare is connected to the GitHub repo.** Pushing to `main` deploys. There
+is no build step, no CI, and no `wrangler.toml` — the repo root is served as-is.
 
-    git push origin main    →  Cloudflare Pages builds and deploys automatically
+    git push origin main    →  Cloudflare deploys automatically
 
 Remote: `https://github.com/brucehere365/bulk-ferment-tracker.git`
+
+⚠️ **The connection is currently Cloudflare _Workers_ Builds, not Pages**, and
+its check fails on every commit — instantly, with `started_at == completed_at`,
+because Workers Builds expects a `wrangler` config this repo does not and should
+not have. It has failed the same way since at least August, on unrelated diffs.
+The site is served from a Workers URL rather than `*.pages.dev`.
+
+Do not "fix" that red check by adding a `wrangler.toml`. The fix is a dashboard
+change — connect the repo as a **Pages** project and disconnect Workers Builds.
+When that happens, **the origin changes**, and `localStorage` does not follow an
+origin: every bake on the old URL becomes invisible. Export a JSON backup from
+the old address first and restore it on the new one. See the storage section.
 
 Consequences worth remembering:
 
@@ -48,6 +59,40 @@ whatever ink colour their card uses and work unchanged in the night theme.
 
 State lives entirely in `localStorage` under the key `bft.v1` (the key kept its
 name through the v2 and v3 schema bumps). There is no backend and no accounts.
+
+## Storage — losing a bake is the one failure this app may not have
+
+It has happened twice in real use, so the rules here are not negotiable.
+
+* `localStorage` is the source of truth: synchronous, and re-read on render.
+* **Every write leaves the copy it replaced at `bft.v1.prev`.** One generation
+  of undo, and `load()` falls back to it.
+* **A payload that will not parse is quarantined at `bft.v1.corrupt`, never
+  overwritten.** Half a bake is recoverable by hand; `blank()` is not.
+* **A write that does not read back did not happen.** `save()` reads the key
+  straight after writing it and sets `storageBroken` if they differ — Private
+  Browsing and a full quota both fail exactly here, and both used to fail
+  silently.
+* **Never save a blank state over anything.** Booting with nothing found sets
+  `bootedEmpty`, and the boot `save()` is skipped. The old unconditional boot
+  save is precisely what turned one unreadable payload into permanent loss.
+* Everything is mirrored into **IndexedDB** (`bft` / `state` / `current`), best
+  effort. On boot `recoverFromMirror()` adopts the mirror if it is newer or
+  holds more bakes — which is the case exactly when `localStorage` was cleared
+  underneath us.
+* When `storageBroken`, the live view shows a persistent `.alarmbar`, not just
+  a toast, and `commit()` suppresses its cheerful "Logged." A toast you might
+  miss cannot be the only warning that a bake is not being written down.
+
+None of that crosses an origin. `localStorage` is per-origin, so a new URL, a
+different browser, or an iOS Home Screen icon beside a Safari tab each hold a
+separate, empty app. **The JSON backup is the only thing that moves between
+them**, which is why `storageSheet()` is reachable from the start screen — the
+screen you are on when a bake has gone missing — and not only from the menu.
+
+Restore **merges and never deletes**: unknown bakes are added, and a bake
+present in both keeps whichever copy has more readings. A restore that replaced
+state would be its own data loss.
 
 ## The app is one thing
 
@@ -128,7 +173,7 @@ legitimate pinch-zoom. `touch-action` is the fix.
 ## Tests
 
     node tests.js       # fermentation model — 56 assertions
-    node ui.tests.js    # real DOM driven by clicks — 69 (needs: npm i jsdom)
+    node ui.tests.js    # real DOM driven by clicks — 85 (needs: npm i jsdom)
 
 Run both before pushing, since a push deploys.
 

@@ -470,6 +470,15 @@ label.field textarea { min-height: 92px; resize: vertical; font-size: 16px; }
   font: 300 15px/1.5 var(--sans);
 }
 
+/* The one thing allowed to shout. Terracotta is this screen's single accent
+ * when it is showing, so nothing else on the live view competes with it. */
+.alarmbar {
+  display: block; width: 100%; text-align: left;
+  background: var(--accent); color: var(--on-accent);
+  border-radius: var(--r-row); padding: 16px 18px; margin-bottom: 14px;
+  font: 400 14.5px/1.4 var(--sans);
+}
+
 /* =============================================================== toast */
 #toast {
   position: fixed; left: 50%; bottom: calc(100px + env(safe-area-inset-bottom));
