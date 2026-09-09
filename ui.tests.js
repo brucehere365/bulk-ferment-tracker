@@ -466,5 +466,91 @@ setTimeout(function () {
   ok('and the bake already here is still here',
     s9.bakes.filter(function (b) { return b.id === 'k1'; }).length === 1, JSON.stringify(s9.bakes.map(function (b) { return b.name; })));
   ok('the running bake is not hijacked by the import', s9.activeId === 'k1');
-  finish();
+  syncTests();
 }, 150);
+
+function syncTests() {
+  head('SYNC IS OFF UNTIL YOU TURN IT ON');
+  var wS = boot(JSON.stringify(goodState('Private bake')), 0);
+  var dS = wS.document;
+  var calls = [];
+  wS.fetch = function (url, opts) {
+    calls.push({ url: url, body: JSON.parse(opts.body) });
+    return Promise.resolve({
+      ok: true,
+      json: function () {
+        return Promise.resolve({ state: {
+          bakes: [goodState('Private bake').bakes[0], (function () {
+            var o = goodState('From the other phone').bakes[0]; o.id = 'other'; return o;
+          })()],
+          deleted: {}, activeId: 'k1'
+        } });
+      }
+    });
+  };
+
+  ok('no sync code is stored by default', wS.localStorage.getItem('bft.sync') === null);
+
+  /* Log a reading and let the debounce elapse: with sync off, nothing at all
+   * should leave the phone. */
+  dS.querySelector('[data-act="logtemp"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));
+  var nS = dS.querySelector('#sheet-root .sheet #numval');
+  nS.value = '25';
+  nS.dispatchEvent(new wS.Event('input', { bubbles: true }));
+  dS.querySelector('#sheet-root .sheet [data-act="save"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));
+
+  setTimeout(function () {
+    ok('and nothing is sent anywhere with sync off', calls.length === 0,
+      JSON.stringify(calls.map(function (c) { return c.url; })));
+
+    head('TURNING SYNC ON');
+    var sheetS = openStorage(wS, dS);
+    ok('the storage sheet offers to set it up', !!sheetS.querySelector('[data-act="sync"]'));
+    sheetS.querySelector('[data-act="sync"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));
+    var syncSheetEl = dS.querySelector('#sheet-root .sheet');
+    ok('the sync sheet says who can read the bakes',
+      /anyone who knows it can read your bakes/i.test(syncSheetEl.textContent));
+
+    syncSheetEl.querySelector('#synccode').value = 'short';
+    syncSheetEl.querySelector('[data-act="sync-save"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));
+    ok('a short code is refused', wS.localStorage.getItem('bft.sync') === null &&
+      /At least 8/.test(dS.querySelector('#sheeterr').textContent));
+
+    syncSheetEl.querySelector('#synccode').value = 'two-loaves-one-oven';
+    syncSheetEl.querySelector('[data-act="sync-save"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));
+    ok('a long enough code is stored',
+      JSON.parse(wS.localStorage.getItem('bft.sync')).code === 'two-loaves-one-oven');
+
+    setTimeout(function () {
+      ok('and it pushes to the sync endpoint', calls.length >= 1 && calls[0].url === 'api/sync',
+        JSON.stringify(calls.map(function (c) { return c.url; })));
+      ok('sending the code and the bakes', calls[0].body.code === 'two-loaves-one-oven' &&
+        calls[0].body.state.bakes.length === 1);
+      var sS = JSON.parse(wS.localStorage.getItem('bft.v1'));
+      ok('the other phone\'s bake arrives',
+        sS.bakes.filter(function (b) { return b.id === 'other'; }).length === 1,
+        JSON.stringify(sS.bakes.map(function (b) { return b.id; })));
+      ok('and this phone\'s own bake is still here',
+        sS.bakes.filter(function (b) { return b.id === 'k1'; }).length === 1);
+
+      var before = calls.length;
+      setTimeout(function () {
+        ok('applying a merge does not bounce another push straight back',
+          calls.length === before, before + ' → ' + calls.length);
+
+        head('DELETING LEAVES A TOMBSTONE, SO IT STAYS DELETED');
+        var wD = boot(JSON.stringify(goodState('Doomed')), 0);
+        var dD = wD.document;
+        dD.querySelector('[data-act="menu"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
+        dD.querySelector('#sheet-root .sheet [data-act="finish"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
+        dD.querySelector('[data-act="delbake"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
+        dD.querySelector('#sheet-root .sheet [data-act="yes"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
+        var sD = JSON.parse(wD.localStorage.getItem('bft.v1'));
+        ok('the bake is gone', sD.bakes.length === 0);
+        ok('and a tombstone records it', !!sD.deleted && !!sD.deleted.k1,
+          JSON.stringify(sD.deleted));
+        finish();
+      }, 60);
+    }, 30);
+  }, 4200);
+}

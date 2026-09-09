@@ -30,7 +30,7 @@
 
   function blank() {
     return {
-      version: 3, activeId: null, bakes: [], savedAt: 0,
+      version: 3, activeId: null, bakes: [], deleted: {}, savedAt: 0,
       settings: { leadMin: 30, sound: true, notify: false, wakeLock: true, useJar: true, night: 'auto' }
     };
   }
@@ -42,6 +42,7 @@
     var d = blank();
     s.settings = Object.assign(d.settings, s.settings || {});
     s.bakes = s.bakes || [];
+    s.deleted = s.deleted || {};
     delete s.templates; delete s.processes; delete s.activeProcessId; delete s.draft;
     s.version = 3;
     s.savedAt = s.savedAt || 0;
@@ -93,6 +94,7 @@
       toast('Not saving — this browser is blocking storage. Export a backup.');
     }
     idbPut(text);
+    syncSoon();
   }
 
   /* The mirror. Best effort by design: localStorage stays the source of truth
@@ -900,18 +902,29 @@
   function mergeBackup(incoming) {
     var byId = {};
     state.bakes.forEach(function (b) { byId[b.id] = b; });
+    /* Deletions travel as tombstones both ways, so a bake removed here is not
+     * resurrected by a restore, and one removed there is removed here. */
+    Object.keys(incoming.deleted || {}).forEach(function (id) {
+      if (!state.deleted[id]) state.deleted[id] = incoming.deleted[id];
+    });
+    var removed = 0;
+    state.bakes = state.bakes.filter(function (b) {
+      if (!state.deleted[b.id]) return true;
+      delete byId[b.id]; removed++; return false;
+    });
     var added = 0, updated = 0;
     (incoming.bakes || []).forEach(function (b) {
-      if (!b || !b.id) return;
+      if (!b || !b.id || state.deleted[b.id]) return;
       var mine = byId[b.id];
       if (!mine) { state.bakes.push(b); byId[b.id] = b; added++; return; }
       if ((b.readings || []).length > (mine.readings || []).length) {
         state.bakes[state.bakes.indexOf(mine)] = b; updated++;
       }
     });
+    if (state.activeId && !byId[state.activeId]) state.activeId = null;
     if (!activeBake() && incoming.activeId && byId[incoming.activeId]) state.activeId = incoming.activeId;
     save();
-    return { added: added, updated: updated };
+    return { added: added, updated: updated, removed: removed };
   }
 
   function importBackup() {
@@ -941,6 +954,130 @@
       reader.readAsText(file);
     });
     input.click();
+  }
+
+  // --------------------------------------------------------------- sync
+  /* Optional, off until two phones are given the same kitchen code. Everything
+   * above still works untouched with it off — this only ever adds a copy
+   * somewhere else, and can never be the reason a bake is lost.
+   *
+   * The code is the only credential, so it is deliberately not treated as a
+   * password: it is kept in its own storage key, never put in a URL, and the
+   * sheet says plainly that whoever knows it can read the bakes. */
+  var SYNC_KEY = 'bft.sync';
+  var SYNC_MIN = 8;
+  var syncState = { code: null, at: 0, error: null, busy: false };
+  try {
+    var rawSync = localStorage.getItem(SYNC_KEY);
+    if (rawSync) syncState.code = JSON.parse(rawSync).code || null;
+  } catch (e) { /* no sync configured */ }
+
+  function saveSyncCode(code) {
+    syncState.code = code || null;
+    try {
+      if (code) localStorage.setItem(SYNC_KEY, JSON.stringify({ code: code }));
+      else localStorage.removeItem(SYNC_KEY);
+    } catch (e) { /* the code is a convenience; losing it costs one retype */ }
+  }
+
+  var syncTimer = null;
+  var syncApplying = false;
+  /* Coalesced: logging three readings in a minute is one push, not three.
+   * save() calls this, and applying a merge calls save(), so the flag is what
+   * stops two phones pushing each other back and forth forever. */
+  function syncSoon() {
+    if (!syncState.code || syncApplying) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(function () { syncNow(false); }, 4000);
+  }
+
+  function syncNow(loud) {
+    if (!syncState.code || syncState.busy) return;
+    if (typeof fetch !== 'function') return;
+    syncState.busy = true;
+    fetch('api/sync', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: syncState.code, state: state })
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.json()['catch'](function () { return {}; }).then(function (b) {
+          throw new Error(b.error === 'sync-not-configured'
+            ? 'Sync is not set up on the server yet.'
+            : b.error === 'code-too-short' ? 'That code is too short.'
+            : 'Sync failed (' + res.status + ').');
+        });
+      }
+      return res.json();
+    }).then(function (body) {
+      syncState.busy = false;
+      syncState.error = null;
+      syncState.at = Date.now();
+      syncApplying = true;
+      var r;
+      try { r = mergeBackup(normalize(body.state || {})); }
+      finally { syncApplying = false; }
+      if (r.added || r.updated || r.removed) {
+        render();
+        if (r.added || r.updated) {
+          toast('Synced — ' + (r.added ? r.added + ' new' : r.updated + ' updated') + ' from the other phone.');
+        }
+      } else if (loud) { toast('Synced. Both phones already match.'); }
+    })['catch'](function (e) {
+      syncState.busy = false;
+      /* Offline is the normal case in a kitchen, not an error worth shouting
+       * about. syncSoon() will pick it up next time something is logged. */
+      syncState.error = e && e.message ? e.message : 'Sync failed.';
+      if (loud) toast(syncState.error);
+    });
+  }
+
+  function syncSheet() {
+    var on = !!syncState.code;
+    openSheet(
+      '<h2>Sync with one other phone</h2>' +
+      '<p class="hint">' + (on
+        ? 'On. Bakes are copied to Cloudflare under your kitchen code and merged with the other phone\'s.'
+        : 'Off. Bakes stay on this phone only.') + '</p>' +
+      '<p class="hint">Both phones type the same code. It is the only thing protecting the data — ' +
+      'anyone who knows it can read your bakes — so make it long and unguessable, and do not ' +
+      'reuse a password. At least ' + SYNC_MIN + ' characters.</p>' +
+      '<label class="field">Kitchen code' +
+      '<input id="synccode" type="text" inputmode="text" autocomplete="off" autocapitalize="none" ' +
+      'spellcheck="false" value="' + esc(syncState.code || '') + '" placeholder="two-loaves-one-oven"></label>' +
+      /* err() writes here, so it has to exist before anything goes wrong. */
+      '<div class="err" id="sheeterr">' + esc(syncState.error || '') + '</div>' +
+      (on && syncState.at ? '<p class="note">Last synced ' + clock(syncState.at) + dayTag(syncState.at) + '.</p>' : '') +
+      '<div class="row">' +
+      '<button class="btn ghost" data-act="cancel">Close</button>' +
+      '<button class="btn primary" data-act="sync-save">' + (on ? 'Save' : 'Turn on') + '</button></div>' +
+      (on ? '<div class="spacer"></div><button class="btn small ghost" data-act="sync-now">Sync now</button>' +
+        '<div class="spacer"></div><button class="btn small danger" data-act="sync-off">Turn sync off</button>' : '') +
+      '<div class="spacer"></div>' +
+      '<p class="note">Merging is the same as a restore: it adds what is missing and never deletes ' +
+      'what is here. Deleting a bake deletes it on both.</p>',
+      function (sheet) {
+        sheet.addEventListener('click', function (e) {
+          var a = e.target.closest('[data-act]');
+          if (!a) return;
+          if (a.dataset.act === 'cancel') return closeSheet();
+          if (a.dataset.act === 'sync-off') {
+            saveSyncCode(null); syncState.at = 0; syncState.error = null;
+            closeSheet(); toast('Sync off. Nothing new leaves this phone.');
+            return;
+          }
+          if (a.dataset.act === 'sync-now') { syncNow(true); return; }
+          if (a.dataset.act === 'sync-save') {
+            var v = (sheet.querySelector('#synccode').value || '').trim();
+            if (v.length < SYNC_MIN) return err('At least ' + SYNC_MIN + ' characters.');
+            saveSyncCode(v);
+            syncState.error = null;
+            closeSheet();
+            toast('Sync on. Pushing this phone’s bakes.');
+            syncNow(true);
+          }
+        });
+      });
   }
 
   /* Installed to the Home Screen, iOS stops wiping this app's storage after
@@ -996,6 +1133,12 @@
       '<button class="btn ghost" data-act="backup-import">Restore from a backup</button>' +
       '<div class="spacer"></div>' +
       '<p class="note">Restoring merges — it adds what is missing and never deletes what is here.</p>' +
+      '<div class="section-title">Sync</div>' +
+      '<p class="hint">' + (syncState.code
+        ? 'On. Your bakes are shared with the other phone using the same kitchen code.'
+        : 'Off. A backup file is a copy you have to remember to take; sync is one you do not.') + '</p>' +
+      '<div class="spacer"></div>' +
+      '<button class="btn ghost" data-act="sync">' + (syncState.code ? 'Sync settings' : 'Set up sync') + '</button>' +
       installBlock(),
       function (sheet) {
         sheet.addEventListener('click', function (e) {
@@ -1003,6 +1146,7 @@
           if (!a) return;
           if (a.dataset.act === 'backup-export') exportBackup();
           if (a.dataset.act === 'backup-import') importBackup();
+          if (a.dataset.act === 'sync') { closeSheet(); syncSheet(); return; }
           if (a.dataset.act === 'install' && installPrompt) {
             installPrompt.prompt();
             installPrompt = null;
@@ -1174,12 +1318,15 @@
         openBakeId = null; render(); break;
 
       case 'storage': closeSheet(); storageSheet(); break;
+      case 'sync': closeSheet(); syncSheet(); break;
       case 'csv': exportCSV(); break;
       case 'openbake': openBakeId = id; render(); break;
       case 'closebake': openBakeId = null; render(); break;
       case 'delbake':
         confirmSheet('Delete this bake?', 'The readings and crumb note go with it. This cannot be undone.', 'Delete', function () {
           state.bakes = state.bakes.filter(function (b) { return b.id !== id; });
+          /* A tombstone, so the other phone does not sync it straight back. */
+          state.deleted[id] = Date.now();
           if (state.activeId === id) state.activeId = null;
           openBakeId = null; save(); render(); toast('Deleted.');
         });
@@ -1211,7 +1358,7 @@
   }
   setInterval(tick, 15000);
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden) { render(); ensureWakeLock(); }
+    if (!document.hidden) { render(); ensureWakeLock(); syncNow(false); }
     else releaseWakeLock();
   });
   window.addEventListener('focus', function () { if (view === 'live') render(); });
@@ -1242,5 +1389,6 @@
   render();
   askForPersistence();
   recoverFromMirror();
+  syncNow(false);
   if (recoveredFrom) toast('The main saved copy would not load — running on ' + recoveredFrom + '.');
 })();

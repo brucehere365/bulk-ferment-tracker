@@ -39,7 +39,8 @@ Consequences worth remembering:
   local path `index.html` references, because the first is easy to remember
   and the second is not.
 * `*.tests.js`, `README.md`, `CLAUDE.md` are in the repo but are not part of the
-  site. `node_modules/`, `package.json`, `package-lock.json` are gitignored.
+  static site, and `functions/` is server-side — it only runs on Pages.
+  `node_modules/`, `package.json`, `package-lock.json` are gitignored.
 * The service worker is **network-first**, so a deploy reaches an
   already-installed phone without a hard refresh. Verified in a real browser:
   change a file, reload, the change is live with no version bump. Do not invert
@@ -103,6 +104,41 @@ screen you are on when a bake has gone missing — and not only from the menu.
 Restore **merges and never deletes**: unknown bakes are added, and a bake
 present in both keeps whichever copy has more readings. A restore that replaced
 state would be its own data loss.
+
+## Sync — the one server, and it is optional
+
+`functions/api/sync.js` is a Cloudflare Pages Function, and the only
+server-side code in the project. It exists because a bake that lives in one
+browser dies with that browser.
+
+**It is off until two phones are given the same kitchen code**, and everything
+above works untouched with it off. Sync only ever *adds* a copy somewhere else;
+it must never become the reason a bake is lost. If it is unconfigured the
+endpoint returns 503 and the app carries on storing locally, silently.
+
+* **Setup is manual and one-off**, in the Cloudflare dashboard: create a KV
+  namespace, bind it to the Pages project as `BAKES`. The setup steps are in a
+  comment at the top of the function. It needs the repo to be a **Pages**
+  project — `functions/` does nothing on Workers Builds.
+* **The code is a shared secret, not authentication.** Anyone who knows it can
+  read those bakes, and the sync sheet says exactly that. Minimum 8 characters.
+  The code is never stored: the KV key is `SHA-256(salt + ' ' + code)`, so a
+  dump of the namespace does not hand over the codes. For anything stronger,
+  put Cloudflare Access in front of the whole site.
+* **POST only.** A GET would put the code in a query string and from there into
+  browser history and every log in between.
+* **The server merges; it does not last-write-wins.** Union of both sides, and
+  where a bake is on both, the copy with more readings wins — the same rule
+  `mergeBackup()` applies to a restored file. Both phones converge on the union
+  rather than whichever synced last.
+* **Deletions travel as tombstones** (`state.deleted`), or deleting a bake on
+  one phone would have the other sync it straight back — which reads as a bug
+  and teaches you not to trust the delete button.
+* `save()` calls `syncSoon()` (4 s debounce), and applying a merge calls
+  `save()`. `syncApplying` is what stops two phones pushing each other back and
+  forth forever. `ui.tests.js` asserts that specifically.
+* Failures are quiet by design. Offline is the normal state of a kitchen, not
+  an error worth shouting about; the next save picks it up.
 
 ## The app is one thing
 
@@ -201,10 +237,16 @@ legitimate pinch-zoom. `touch-action` is the fix.
 
 ## Tests
 
-    node tests.js       # fermentation model — 56 assertions
-    node ui.tests.js    # real DOM driven by clicks — 102 (needs: npm i jsdom)
+    node tests.js        # fermentation model — 56 assertions
+    node sync.tests.js   # the real Pages Function against a fake KV — 22
+    node ui.tests.js     # real DOM driven by clicks — 115 (needs: npm i jsdom)
 
-Run both before pushing, since a push deploys.
+Run all three before pushing, since a push deploys.
+
+`sync.tests.js` imports `functions/api/sync.js` and drives it with real
+Request objects — the merge it tests is the merge that runs on Cloudflare. It
+matters more than its size suggests: that endpoint is the one place two phones'
+bakes are reconciled, so a wrong merge silently loses a bake on one of them.
 
 `ui.tests.js` clicks real buttons and reads real `localStorage`, including a
 full page reload in a second JSDOM. Its `boot()` installs an advanceable
