@@ -6,16 +6,13 @@
   'use strict';
 
   var M = window.BFModel;
-  var P = window.BFProcess;
   var H = M.MS_PER_HOUR;
-  var MIN = 60000;
   var KEY = 'bft.v1';
 
   // ------------------------------------------------------------- storage
   function blank() {
     return {
-      version: 2, activeId: null, bakes: [],
-      templates: [P.defaultTemplate()], processes: [], activeProcessId: null, draft: null,
+      version: 3, activeId: null, bakes: [],
       settings: { leadMin: 30, sound: true, notify: false, wakeLock: true, useJar: true, night: 'auto' }
     };
   }
@@ -28,21 +25,13 @@
       var d = blank();
       s.settings = Object.assign(d.settings, s.settings || {});
       s.bakes = s.bakes || [];
-      /* v1 knew only about bulk ferments. Its bakes are untouched; it just
-       * gains the seed template and an empty process list. */
-      s.templates = (s.templates && s.templates.length ? s.templates : [P.defaultTemplate()]).map(P.normalizeTemplate);
-      s.processes = s.processes || [];
-      s.activeProcessId = s.activeProcessId || null;
-      s.draft = s.draft || null;
-      s.version = 2;
+      /* v2 carried recipe templates and multi-stage bakes alongside the bulk
+       * ferments. Those are gone; the bulk ferments they wrapped are ordinary
+       * bakes and stay exactly as they were. */
+      delete s.templates; delete s.processes; delete s.activeProcessId; delete s.draft;
+      s.version = 3;
       return s;
     } catch (e) { console.warn('Could not read saved state, starting fresh.', e); return blank(); }
-  }
-  function activeProcess() {
-    return state.processes.filter(function (p) { return p.id === state.activeProcessId; })[0] || null;
-  }
-  function findTemplate(id) {
-    return state.templates.filter(function (t) { return t.id === id; })[0] || null;
   }
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify(state)); }
@@ -79,6 +68,14 @@
     });
   }
   function n1(v) { return (Math.round(v * 10) / 10).toString(); }
+
+  /* Phone keyboards in most of Europe put a comma where the decimal point
+   * goes, and `parseFloat('23,5')` is 23. Both separators mean the same thing
+   * in a kitchen, so every number typed into this app comes through here. */
+  function parseNum(v) {
+    var s = String(v == null ? '' : v).trim().replace(/,/g, '.');
+    return s === '' ? NaN : parseFloat(s);
+  }
 
   /* Night is the same layout dimmed, not a different app. Auto flips it
    * between 23:00 and 06:00 — the hours this thing actually gets read in. */
@@ -203,110 +200,55 @@
   }
 
   // ---------------------------------------------------------------- views
-  var view = 'home';
+  var view = 'start';
   var lastView = null;
   var openBakeId = null;
-  var editingTemplateId = null;
-  var timelineOpen = true;
-  /* What the full-bake flow has been told so far. Not persisted: it is a
-   * ten-second decision, and the plan it produces is re-derived from the clock
-   * on every render rather than stored. */
-  var bakeSetup = null;
 
   var VIEWS = {
-    home: function () { return homeView(); },
     start: function () { return startView(); },
     live: function () { return liveView(activeBake()); },
-    history: function () { return historyView(); },
-    templates: function () { return templatesView(); },
-    editor: function () { return editorView(findTemplate(editingTemplateId)); },
-    loaf: function () { return loafView(); },
-    ready: function () { return readyView(); },
-    planner: function () { return plannerView(); },
-    process: function () { return processView(activeProcess()); }
+    history: function () { return historyView(); }
   };
 
-  /* The floating pill is the only persistent chrome. Its third slot is
-   * contextual: settings while something is running, the process library
-   * otherwise — one icon, never two meanings on screen at once. */
-  var NAV_VIEWS = { home: 1, live: 1, process: 1, history: 1, templates: 1 };
+  /* The floating pill is the only persistent chrome. Two slots is all there is
+   * left to say: the bake in front of you, and the ones behind it. Settings
+   * live under the ••• on the live view, where they are actually needed. */
+  var NAV_VIEWS = { start: 1, live: 1, history: 1 };
   function navPill() {
-    var menuAct = view === 'process' ? 'proc-menu' : view === 'live' ? 'menu' : 'templates';
-    var menuLabel = menuAct === 'templates' ? 'Processes and templates' : 'Menu';
     function b(cls, act, label, current) {
       return '<button class="' + cls + '" data-act="' + act + '" aria-label="' + label + '"' +
         (current ? ' aria-current="true"' : '') + '><i></i></button>';
     }
     return '<nav class="navpill" aria-label="Main">' +
-      b('n-home', 'home', 'Home', view === 'home' || view === 'live' || view === 'process') +
+      b('n-home', 'home', 'Home', view === 'start' || view === 'live') +
       b('n-hist', 'history', 'History', view === 'history') +
-      b('n-menu', menuAct, menuLabel, view === 'templates') +
       '</nav>';
   }
 
   function render() {
     var app = document.getElementById('app');
-    if (view === 'live' && !activeBake()) view = 'home';
-    if (view === 'process' && !activeProcess()) view = 'home';
-    if (view === 'editor' && !findTemplate(editingTemplateId)) view = 'templates';
-    if (view === 'ready' && !(bakeSetup && findTemplate(bakeSetup.templateId))) view = 'loaf';
+    if (view === 'live' && !activeBake()) view = 'start';
     applyTheme();
     /* Entrance animations belong to arriving at a view, not to the clock. */
     app.className = view === lastView ? '' : 'enter';
     lastView = view;
-    app.innerHTML = (VIEWS[view] || VIEWS.home)() + (NAV_VIEWS[view] ? navPill() : '');
+    app.innerHTML = (VIEWS[view] || VIEWS.start)() + (NAV_VIEWS[view] ? navPill() : '');
     bindAll(app);
-    var awake = view === 'live' || view === 'process';
-    if (awake) { syncAlerts(); ensureWakeLock(); } else { clearTimers(); releaseWakeLock(); }
+    if (view === 'live') { syncAlerts(); ensureWakeLock(); } else { clearTimers(); releaseWakeLock(); }
   }
 
-  // ----------------------------------------------------------- home view
-  /* Three ways in. If something is already running you land on it, with a way
-   * back out — nobody wants a mode picker at 6am with dough on the bench. */
-  function homeView() {
-    var proc = activeProcess();
-    var bulk = activeBake();
-    return '' +
-      '<div class="topbar"><h1><span class="sub">' + new Date().toLocaleDateString(undefined, { weekday: 'long' }) +
-      ' · the clock is a suggestion</span>Track my <b>loaf</b>' +
-      '</h1></div>' +
-      (proc ? resumeCard('process', proc) : '') +
-      (bulk && !proc ? resumeCard('bulk', bulk) : '') +
-      '<div class="section-title">' + (proc || bulk ? 'Or start something else' : 'What are you doing?') + '</div>' +
-      '<div class="modes">' +
-      modeCard('mode-full', 'Full bake', 'Pick a loaf and start now. It walks you through every stage.') +
-      modeCard('mode-plan', 'Plan backwards', 'Work back from a fixed finish time.') +
-      modeCard('mode-bulk', 'Bulk ferment only', 'One stage, watched closely by temperature.') +
-      '</div>' +
-      '<p class="note center">The clock is a suggestion. The dough decides.</p>';
-  }
-
-  function modeCard(act, title, body) {
-    return '<button class="mode" data-act="' + act + '"><b>' + esc(title) + '</b><em>' + esc(body) + '</em></button>';
-  }
-
-  function resumeCard(kind, item) {
-    var now = Date.now();
-    if (kind === 'bulk') {
-      var st = M.stateAt(item.readings, now);
-      return '<button class="resume" data-act="resume-bulk">' +
-        '<span class="tag">Bulk running</span><b>' + esc(item.name) + '</b>' +
-        '<em>' + (st.empty ? 'No readings yet.' : st.ready ? 'Ready — go read the dough.' : dur(st.msRemaining) + ' to preshape, around ' + clock(st.predictedEnd) + dayTag(st.predictedEnd, now)) + '</em></button>';
-    }
-    var tl = projectProcess(item, now);
-    var cur = tl.current;
-    return '<button class="resume" data-act="resume-process">' +
-      '<span class="tag">Bake in progress</span><b>' + esc(item.name) + '</b>' +
-      '<em>' + (cur ? cur.name + (cur.status === 'running' ? ' — ' + dur(now - cur.start) + ' in' : ' — not started yet') : 'Every stage ticked off.') + '</em></button>';
-  }
-
+  // ---------------------------------------------------------- start view
+  /* There is one thing this app does, so opening it either lands you on the
+   * bulk you are already running or on the form that starts one. No mode
+   * picker: nobody wants to choose anything at 6am with dough on the bench. */
   function startView() {
     var has = state.bakes.length > 0;
     return '' +
-      '<div class="topbar"><button class="iconbtn" data-act="home">Back</button>' +
-      '<h1><span class="sub">The dough decides</span>Bulk <b>ferment</b></h1>' +
+      '<div class="topbar">' +
+      '<h1><span class="sub">' + new Date().toLocaleDateString(undefined, { weekday: 'long' }) +
+      ' · the dough decides</span>Bulk <b>ferment</b></h1>' +
       (has ? '<button class="iconbtn" data-act="history">History</button>' : '') + '</div>' +
-      '<div class="hero"><div class="label">No bake running</div>' +
+      '<div class="hero setup"><div class="label">No bake running</div>' +
       '<div class="remain" style="margin-top:8px">Take the dough temperature and start the clock.</div></div>' +
       '<form id="startform">' +
       '<label class="field">Bake name<input name="name" placeholder="' + esc(defaultName()) + '" autocomplete="off"></label>' +
@@ -315,7 +257,9 @@
       '<em>Off is fine — temperature alone drives the whole prediction. You can switch it on mid-bake.</em></div>' +
       '<button type="button" class="switch" role="switch" aria-checked="' + !!state.settings.useJar + '" data-act="t-jar-start"><i></i></button></div>' +
       '<label class="field">First dough temperature °C — this timestamps the start' +
-      '<input name="temp" type="number" inputmode="decimal" step="0.1" min="10" max="35" placeholder="24.5" required></label>' +
+      /* Text, not number: a `type=number` field silently discards a comma, and
+       * half the phones that open this app put a comma on the decimal key. */
+      '<input name="temp" type="text" inputmode="decimal" autocomplete="off" placeholder="24.5" required></label>' +
       '<div class="err" id="starterr"></div>' +
       '<div class="spacer"></div>' +
       '<button class="btn primary" type="submit">Start bulk</button>' +
@@ -411,65 +355,13 @@
   }
 
   function historyView() {
-    var procs = state.processes.filter(function (p2) { return p2.id !== state.activeProcessId; })
-      .sort(function (a, b) { return b.createdAt - a.createdAt; });
-    /* A bulk that belongs to a full bake is shown inside that bake, not twice. */
-    var owned = {};
-    state.processes.forEach(function (p2) { if (p2.bulkBakeId) owned[p2.bulkBakeId] = true; });
-    var done = state.bakes.filter(function (b) { return b.id !== state.activeId && !owned[b.id]; })
+    var done = state.bakes.filter(function (b) { return b.id !== state.activeId; })
       .sort(function (a, b) { return b.startedAt - a.startedAt; });
-
-    var body = '';
-    if (procs.length) body += '<div class="section-title">Full bakes</div>' + procs.map(procCard).join('');
-    if (done.length) body += '<div class="section-title">Bulk ferments</div>' + done.map(bakeCard).join('');
-    if (!body) body = '<div class="empty">No finished bakes yet.</div>';
 
     return '<div class="topbar"><button class="iconbtn" data-act="back">Back</button>' +
       '<h1><span class="sub">History</span>What the dough <b>did last time</b></h1>' +
-      (procs.length ? '<button class="iconbtn" data-act="csv-stages">Stages</button>' : '') +
-      (done.length || procs.length ? '<button class="iconbtn" data-act="csv">CSV</button>' : '') + '</div>' + body;
-  }
-
-  function procCard(p2) {
-    var open = openBakeId === p2.id;
-    var tl = projectProcess(p2, p2.finishedAt || Date.now());
-    var ticked = tl.chain.filter(function (e) { return e.actualEnd != null; }).length;
-    var rec = bulkRecord(p2);
-    var notes = p2.events.filter(function (e) { return e.log; });
-    var late = tl.events.filter(function (e) { return e.actualEnd != null && e.plannedEnd != null; })
-      .map(function (e) { return e.actualEnd - e.plannedEnd; });
-    var drift = late.length ? late[late.length - 1] : null;
-
-    return '<div class="bake">' +
-      '<h3>' + esc(p2.name) + '</h3>' +
-      '<div class="meta">' + dateStr(p2.createdAt) + ' · ' + esc(p2.template.name) + ' · ' + (p2.status || 'active') + '</div>' +
-      '<div class="kv">' +
-      '<span>stages <b>' + ticked + '/' + tl.chain.length + '</b></span>' +
-      '<span>planned bulk <b>' + n1(p2.params.bulkTempC) + '°C</b></span>' +
-      (rec ? '<span>bulk ran <b>' + dur((rec.finishedAt || Date.now()) - rec.startedAt) + '</b></span>' : '') +
-      (drift != null ? '<span>finished <b>' + dur(Math.abs(drift)) + ' ' + (drift > 0 ? 'late' : 'early') + '</b></span>' : '') +
-      '</div>' +
-      (p2.adjustments && p2.adjustments.length
-        ? '<div class="note" style="margin-bottom:8px">Planner moved: ' + esc(p2.adjustments.map(function (a) { return a.text; }).join(' ')) + '</div>' : '') +
-      (open
-        ? '<ul class="timeline compact">' + tl.chain.map(function (e) {
-          return '<li class="tlrow ' + (e.actualEnd != null ? 'done' : 'future') + '">' +
-            '<span class="when">' + (e.actualStart != null ? clock(e.actualStart) : '—') + '</span>' +
-            '<span class="what"><b>' + esc(e.name) + '</b><em>' +
-            (e.actualEnd != null ? 'took ' + dur(e.actualEnd - e.actualStart) +
-              ' · planned ' + clock(e.plannedStart) : 'never ticked off') + '</em>' +
-            (e.log ? '<em class="cue">' + esc(e.log) + '</em>' : '') + '</span></li>';
-        }).join('') + '</ul>' +
-        (notes.length ? '' : '<p class="note">No stage notes on this one.</p>') +
-        (rec && rec.readings.length ? '<div class="section-title">Bulk</div>' + chartSVG(rec.readings, rec.finishedAt || Date.now(), { historic: true }) : '') +
-        '<label class="field">Crumb result — how did it actually bake?' +
-        '<textarea data-act="crumb" data-id="' + (rec ? rec.id : p2.id) + '" placeholder="Open even crumb, slight gumminess at the base…">' + esc((rec && rec.crumb) || p2.crumb || '') + '</textarea></label>' +
-        '<div class="rowbtns">' +
-        '<button class="btn small ghost" data-act="closebake">Close</button>' +
-        '<button class="btn small ghost" data-act="proc-ics-old" data-id="' + p2.id + '">.ics</button>' +
-        '<button class="btn small danger" data-act="delproc" data-id="' + p2.id + '">Delete</button></div>'
-        : '<button class="btn small ghost" data-act="openproc" data-id="' + p2.id + '">Open</button>') +
-      '</div>';
+      (done.length ? '<button class="iconbtn" data-act="csv">CSV</button>' : '') + '</div>' +
+      (done.length ? done.map(bakeCard).join('') : '<div class="empty">No finished bakes yet.</div>');
   }
 
   function bakeCard(b) {
@@ -496,941 +388,6 @@
         '<button class="btn small danger" data-act="delbake" data-id="' + b.id + '">Delete bake</button></div>'
         : '<button class="btn small ghost" data-act="openbake" data-id="' + b.id + '">Open</button>') +
       '</div>';
-  }
-
-  // ------------------------------------------------------- templates view
-  function templatesView() {
-    return '<div class="topbar"><button class="iconbtn" data-act="home">Back</button>' +
-      '<h1><span class="sub">Templates</span>Your <b>processes</b></h1>' +
-      '<button class="iconbtn" data-act="tpl-import">Import</button></div>' +
-      '<p class="note">A process is an ordered list of stages. Edit them, reorder them, throw stages away. ' +
-      'Every number in here is a starting point.</p>' +
-      state.templates.map(function (t) {
-        var chain = P.chainStages(t);
-        var bulk = t.stages.filter(function (x) { return x.type === 'bulk'; })[0];
-        return '<div class="bake"><h3>' + esc(t.name) + '</h3>' +
-          '<div class="meta">' + t.stages.length + ' stages' +
-          (bulk ? ' · bulk from the temperature model' : ' · no bulk stage') +
-          ' · about ' + P.fmtHours(chain.reduce(function (a, x) { return a + P.stageDurationMin(x, {}); }, 0) / 60) + ' end to end</div>' +
-          (t.description ? '<div class="note" style="margin-bottom:8px">' + esc(t.description) + '</div>' : '') +
-          '<div class="rowbtns">' +
-          '<button class="btn small ghost" data-act="tpl-edit" data-id="' + t.id + '">Edit</button>' +
-          '<button class="btn small ghost" data-act="tpl-dupe" data-id="' + t.id + '">Duplicate</button>' +
-          '<button class="btn small ghost" data-act="tpl-export" data-id="' + t.id + '">Export</button>' +
-          (state.templates.length > 1 ? '<button class="btn small danger" data-act="tpl-del" data-id="' + t.id + '">Delete</button>' : '') +
-          '</div></div>';
-      }).join('') +
-      '<div class="spacer"></div>' +
-      '<button class="btn small ghost" data-act="tpl-new">New empty process</button>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn small ghost" data-act="tpl-reseed">Restore “Bruce’s Loaf” to the seeded version</button>';
-  }
-
-  // ---------------------------------------------------------- stage editor
-  /* A one-line summary of what a stage will actually do, so the list reads as
-   * a recipe rather than a data structure. */
-  function stageSummary(s, tpl) {
-    switch (s.type) {
-      case 'fixed': return Math.round(s.durationMin) + ' min timer';
-      case 'active': return s.durationMin == null ? 'hands-on, no timer' : 'hands-on, about ' + Math.round(s.durationMin) + ' min';
-      case 'repeat':
-        var host = s.duringStageId && P.findStage(tpl, s.duringStageId);
-        return '×' + s.reps + ', every ' + Math.round(s.intervalMin) + ' min' +
-          (host ? ' — during ' + host.name + (s.offsetMin ? ', from +' + Math.round(s.offsetMin) + ' min' : ', from its start') : ' — on its own');
-      case 'bulk': return 'target ' + n1(s.targetTempC) + ' °C → about ' + P.fmtHours(M.hoursAt(s.targetTempC)) + ', re-read live from the dough temp';
-      case 'cold-proof': return P.fmtHours(s.minMin / 60) + ' to ' + P.fmtHours(s.maxMin / 60) + ' — the schedule flexes here';
-      case 'bake': return 'preheat ' + Math.round(s.preheatMin) + ' min · ' +
-        s.steps.map(function (b) { return Math.round(b.tempC) + ' °C ' + Math.round(b.durationMin) + ' min ' + b.label.toLowerCase(); }).join(' → ');
-      case 'starter-feed': return (s.role === 'revival' ? s.feeds + ' feed' + (s.feeds > 1 ? 's' : '') + ' ' + n1(s.gapHours) + ' h apart' : 'one feed') +
-        ' · ' + s.ratio + ' · ' + P.fmtHours(s.peakHours) + ' to peak' +
-        (s.fridgeOnly ? ' · only from the fridge' : '');
-      default: return '';
-    }
-  }
-
-  function editorView(tpl) {
-    if (!tpl) return '';
-    return '<div class="topbar"><button class="iconbtn" data-act="templates">Back</button>' +
-      '<h1><span class="sub">' + tpl.stages.length + ' stages</span>' + esc(tpl.name) + '</h1>' +
-      '<button class="iconbtn" data-act="tpl-meta" data-id="' + tpl.id + '">Name</button></div>' +
-      '<ul class="stagelist">' + tpl.stages.map(function (st, i) {
-        return '<li class="stagerow' + (st.type === 'bulk' ? ' bulkrow' : '') + '">' +
-          '<div class="ord">' + (i + 1) + '</div>' +
-          '<div class="body" data-act="st-edit" data-id="' + st.id + '">' +
-          '<b>' + esc(st.name) + '<span class="pill">' + esc(P.TYPE_LABEL[st.type]) + '</span></b>' +
-          '<em>' + esc(stageSummary(st, tpl)) + '</em>' +
-          (st.cues.length ? '<em class="cue">Cues: ' + esc(st.cues.join(' · ')) + '</em>' : '') +
-          '</div>' +
-          '<div class="movers">' +
-          '<button class="mv" data-act="st-up" data-id="' + st.id + '"' + (i === 0 ? ' disabled' : '') + ' aria-label="Move up">↑</button>' +
-          '<button class="mv" data-act="st-down" data-id="' + st.id + '"' + (i === tpl.stages.length - 1 ? ' disabled' : '') + ' aria-label="Move down">↓</button>' +
-          '</div></li>';
-      }).join('') + '</ul>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn small ghost" data-act="st-add">Add a stage</button>' +
-      '<p class="note">Tap a stage to edit it. The bulk stage has no duration on purpose — its length comes from the ' +
-      'temperature model and, once it is running, from the readings you log.</p>';
-  }
-
-  function stageSheet(tplId, stageId) {
-    var tpl = findTemplate(tplId);
-    var st = P.findStage(tpl, stageId);
-    if (!st) return;
-    var hosts = tpl.stages.filter(function (x) { return x.id !== st.id && (x.type === 'bulk' || x.type === 'fixed' || x.type === 'cold-proof'); });
-    var anchors = tpl.stages.filter(function (x) { return x.type !== 'starter-feed' && x.type !== 'repeat'; });
-
-    function f(label, id, val, attrs) {
-      return '<label class="field">' + label + '<input id="' + id + '" ' + (attrs || '') + ' value="' + esc(val == null ? '' : val) + '"></label>';
-    }
-    var body = '';
-    if (st.type === 'fixed') body += f('Duration, minutes', 'f-dur', st.durationMin, 'type="number" inputmode="numeric" step="5" min="0"');
-    if (st.type === 'active') body += f('Duration, minutes — leave blank for “until it is done”', 'f-dur', st.durationMin, 'type="number" inputmode="numeric" step="5" min="0"');
-    if (st.type === 'repeat') {
-      body += f('How many times', 'f-reps', st.reps, 'type="number" inputmode="numeric" step="1" min="1"');
-      body += f('Every … minutes', 'f-int', st.intervalMin, 'type="number" inputmode="numeric" step="5" min="1"');
-      body += '<label class="field">Runs during<select id="f-host"><option value="">On its own, in sequence</option>' +
-        hosts.map(function (h) { return '<option value="' + h.id + '"' + (h.id === st.duringStageId ? ' selected' : '') + '>' + esc(h.name) + '</option>'; }).join('') +
-        '</select></label>';
-      body += f('First one at … minutes into that stage', 'f-off', st.offsetMin, 'type="number" inputmode="numeric" step="5" min="0"');
-    }
-    if (st.type === 'bulk') {
-      body += f('Expected dough temperature °C', 'f-temp', st.targetTempC, 'type="number" inputmode="decimal" step="0.5" min="10" max="35"');
-      body += '<p class="hint">At ' + n1(st.targetTempC) + ' °C the model gives ' + P.fmtHours(M.hoursAt(st.targetTempC)) +
-        ' and a target rise of ' + Math.round(M.targetRisePct(st.targetTempC)) + '%. There is no duration field here on purpose.</p>';
-    }
-    if (st.type === 'cold-proof') {
-      body += f('Shortest, hours', 'f-min', st.minMin / 60, 'type="number" inputmode="decimal" step="0.5" min="0"');
-      body += f('Longest, hours', 'f-max', st.maxMin / 60, 'type="number" inputmode="decimal" step="0.5" min="0"');
-      body += '<p class="hint">The planner stretches and squeezes inside this range to keep the bench work out of the night.</p>';
-    }
-    if (st.type === 'bake') {
-      body += f('Preheat, minutes', 'f-pre', st.preheatMin, 'type="number" inputmode="numeric" step="5" min="0"');
-      body += '<div class="section-title">Steps</div>' +
-        st.steps.map(function (b, i) {
-          return '<div class="bakestep">' +
-            '<input data-bs="label" data-i="' + i + '" value="' + esc(b.label) + '" placeholder="Covered">' +
-            '<input data-bs="tempC" data-i="' + i + '" type="number" inputmode="numeric" step="5" value="' + b.tempC + '"><span>°C</span>' +
-            '<input data-bs="durationMin" data-i="' + i + '" type="number" inputmode="numeric" step="5" value="' + b.durationMin + '"><span>min</span>' +
-            (st.steps.length > 1 ? '<button class="mv" data-act="bs-del" data-i="' + i + '" aria-label="Remove step">✕</button>' : '') +
-            '</div>';
-        }).join('') +
-        '<button class="btn small ghost" data-act="bs-add">Add a bake step</button>';
-    }
-    if (st.type === 'starter-feed') {
-      body += '<label class="field">Role<select id="f-role">' +
-        '<option value="final"' + (st.role === 'final' ? ' selected' : '') + '>Final feed — must be at peak for the dough</option>' +
-        '<option value="revival"' + (st.role === 'revival' ? ' selected' : '') + '>Revival feeds — waking it up beforehand</option></select></label>';
-      body += f('Ratio', 'f-ratio', st.ratio, 'type="text" autocomplete="off" placeholder="1:5:5"');
-      body += f('Hours to peak', 'f-peak', st.peakHours, 'type="number" inputmode="decimal" step="0.5" min="0.5"');
-      if (st.role === 'revival') {
-        body += f('How many feeds', 'f-feeds', st.feeds, 'type="number" inputmode="numeric" step="1" min="1"');
-        body += f('Hours between them', 'f-gap', st.gapHours, 'type="number" inputmode="decimal" step="1" min="0.5"');
-      } else {
-        body += '<label class="field">At peak in time for<select id="f-anchor">' +
-          anchors.map(function (h) { return '<option value="' + h.id + '"' + (h.id === st.peakAtStageId ? ' selected' : '') + '>' + esc(h.name) + '</option>'; }).join('') +
-          '</select></label>';
-      }
-      body += '<div class="toggle"><div class="t">Only when the starter comes from the fridge' +
-        '<em>Skipped entirely if you tell the planner it is already active.</em></div>' +
-        '<button type="button" class="switch" role="switch" aria-checked="' + !!st.fridgeOnly + '" data-act="f-fridge"><i></i></button></div>';
-    }
-
-    openSheet(
-      '<h2>' + esc(st.name) + '</h2>' +
-      '<p class="hint">' + esc(P.TYPE_LABEL[st.type]) + '. ' + esc(stageSummary(st, tpl)) + '</p>' +
-      f('Name', 'f-name', st.name, 'type="text" autocomplete="off"') +
-      body +
-      '<label class="field">Notes — shown on screen while the stage is running<textarea id="f-notes">' + esc(st.notes) + '</textarea></label>' +
-      '<label class="field">Cue checklist, one per line — a stage with cues always waits for you' +
-      '<textarea id="f-cues" placeholder="Domed, not flat&#10;Jiggles as one mass">' + esc(st.cues.join('\n')) + '</textarea></label>' +
-      '<div class="toggle"><div class="t">Hands-on<em>The planner keeps hands-on moments out of 23:00–06:00.</em></div>' +
-      '<button type="button" class="switch" role="switch" aria-checked="' + !!st.handsOn + '" data-act="f-handson"><i></i></button></div>' +
-      '<div class="err" id="sheeterr"></div>' +
-      '<div class="row"><button class="btn ghost" data-act="cancel">Cancel</button>' +
-      '<button class="btn primary" data-act="st-save">Save</button></div>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn small danger" data-act="st-del">Delete this stage</button>',
-      function (sheet) {
-        var handsOn = !!st.handsOn, fridgeOnly = !!st.fridgeOnly;
-        var steps = P.clone(st.steps || []);
-        function redrawSteps() { closeSheet(); st.steps = steps; saveTemplates(); stageSheet(tplId, stageId); }
-        sheet.addEventListener('input', function (e) {
-          var bs = e.target.dataset.bs;
-          if (bs) {
-            var i = +e.target.dataset.i;
-            steps[i][bs] = bs === 'label' ? e.target.value : parseFloat(e.target.value);
-          }
-        });
-        sheet.addEventListener('click', function (e) {
-          var btn = e.target.closest('[data-act]');
-          var act = btn && btn.dataset.act;
-          if (act === 'cancel') return closeSheet();
-          if (act === 'f-handson') { handsOn = !handsOn; btn.setAttribute('aria-checked', handsOn); return; }
-          if (act === 'f-fridge') { fridgeOnly = !fridgeOnly; btn.setAttribute('aria-checked', fridgeOnly); return; }
-          if (act === 'bs-add') { steps.push({ label: 'Uncovered', tempC: 220, durationMin: 15 }); return redrawSteps(); }
-          if (act === 'bs-del') { steps.splice(+btn.dataset.i, 1); return redrawSteps(); }
-          if (act === 'st-del') {
-            closeSheet();
-            confirmSheet('Delete “' + st.name + '”?', 'Anything that referred to it — a fold that ran during it, a feed timed for it — loses that link.', 'Delete', function () {
-              tpl.stages = tpl.stages.filter(function (x) { return x.id !== stageId; });
-              saveTemplates(); render(); toast('Stage deleted.');
-            });
-            return;
-          }
-          if (act !== 'st-save') return;
-
-          var v = function (sel) { var el = sheet.querySelector(sel); return el ? el.value : null; };
-          var nu = function (sel, d) { var el = sheet.querySelector(sel); if (!el) return d; var x = parseFloat(el.value); return isFinite(x) ? x : d; };
-          var next = { id: st.id, type: st.type, name: (v('#f-name') || '').trim() || st.name, handsOn: handsOn };
-          next.notes = v('#f-notes') || '';
-          next.cues = (v('#f-cues') || '').split('\n').map(function (c) { return c.trim(); }).filter(Boolean);
-
-          if (st.type === 'fixed') next.durationMin = nu('#f-dur', st.durationMin);
-          if (st.type === 'active') {
-            var raw = v('#f-dur');
-            next.durationMin = raw == null || raw === '' ? null : nu('#f-dur', 0);
-          }
-          if (st.type === 'repeat') {
-            next.reps = nu('#f-reps', st.reps);
-            next.intervalMin = nu('#f-int', st.intervalMin);
-            next.duringStageId = v('#f-host') || null;
-            next.offsetMin = nu('#f-off', 0);
-          }
-          if (st.type === 'bulk') {
-            var t = nu('#f-temp', st.targetTempC);
-            if (t < M.TEMP_MIN || t > M.TEMP_MAX) return err('Dough temperature has to be between ' + M.TEMP_MIN + ' and ' + M.TEMP_MAX + ' °C.');
-            next.targetTempC = t;
-          }
-          if (st.type === 'cold-proof') {
-            var lo = nu('#f-min', 8) * 60, hi = nu('#f-max', 16) * 60;
-            if (hi < lo) return err('The longest cold proof cannot be shorter than the shortest.');
-            next.minMin = lo; next.maxMin = hi;
-          }
-          if (st.type === 'bake') {
-            next.preheatMin = nu('#f-pre', st.preheatMin);
-            next.steps = steps.filter(function (b) { return isFinite(b.tempC) && isFinite(b.durationMin); });
-            if (!next.steps.length) return err('A bake needs at least one step.');
-          }
-          if (st.type === 'starter-feed') {
-            next.role = v('#f-role') || st.role;
-            next.ratio = v('#f-ratio') || st.ratio;
-            next.peakHours = nu('#f-peak', st.peakHours);
-            next.fridgeOnly = fridgeOnly;
-            if (next.role === 'revival') { next.feeds = nu('#f-feeds', st.feeds); next.gapHours = nu('#f-gap', st.gapHours); }
-            else { next.peakAtStageId = v('#f-anchor') || st.peakAtStageId; next.feeds = 1; }
-          }
-          var i = tpl.stages.findIndex(function (x) { return x.id === stageId; });
-          tpl.stages[i] = P.normalizeStage(next);
-          saveTemplates(); closeSheet(); render(); toast('Saved.');
-        });
-      });
-  }
-
-  function saveTemplates() {
-    var t = findTemplate(editingTemplateId);
-    if (t) { t.updatedAt = Date.now(); state.templates[state.templates.indexOf(t)] = P.normalizeTemplate(t); }
-    save();
-  }
-
-  function addStageSheet() {
-    var tpl = findTemplate(editingTemplateId);
-    openSheet('<h2>Add a stage</h2><p class="hint">It goes on the end; move it with the arrows.</p>' +
-      '<div class="choices">' + P.TYPES.map(function (ty) {
-        return '<button class="btn" data-newtype="' + ty + '">' + esc(P.TYPE_LABEL[ty]) + '</button>';
-      }).join('') + '</div>' +
-      '<div class="row"><button class="btn ghost" data-act="cancel">Cancel</button></div>',
-      function (sheet) {
-        sheet.addEventListener('click', function (e) {
-          if (e.target.dataset.act === 'cancel') return closeSheet();
-          var ty = e.target.dataset.newtype;
-          if (!ty) return;
-          var st = P.blankStage(ty);
-          tpl.stages.push(st);
-          saveTemplates(); closeSheet(); render();
-          stageSheet(tpl.id, st.id);
-        });
-      });
-  }
-
-  function moveStage(id, dir) {
-    var tpl = findTemplate(editingTemplateId);
-    var i = tpl.stages.findIndex(function (x) { return x.id === id; });
-    var j = i + dir;
-    if (i < 0 || j < 0 || j >= tpl.stages.length) return;
-    var st = tpl.stages.splice(i, 1)[0];
-    tpl.stages.splice(j, 0, st);
-    saveTemplates(); render();
-  }
-
-  function templateMetaSheet(id) {
-    var tpl = findTemplate(id);
-    openSheet('<h2>Process</h2>' +
-      '<label class="field">Name<input id="m-name" type="text" value="' + esc(tpl.name) + '"></label>' +
-      '<label class="field">Description<textarea id="m-desc">' + esc(tpl.description) + '</textarea></label>' +
-      '<div class="row"><button class="btn ghost" data-act="cancel">Cancel</button>' +
-      '<button class="btn primary" data-act="m-save">Save</button></div>',
-      function (sheet) {
-        sheet.addEventListener('click', function (e) {
-          if (e.target.dataset.act === 'cancel') return closeSheet();
-          if (e.target.dataset.act !== 'm-save') return;
-          tpl.name = sheet.querySelector('#m-name').value.trim() || tpl.name;
-          tpl.description = sheet.querySelector('#m-desc').value.trim();
-          tpl.builtin = false;
-          saveTemplates(); closeSheet(); render(); toast('Saved.');
-        });
-      });
-  }
-
-  // ----------------------------------------------------------- JSON in/out
-  function download(text, filename, mime) {
-    var blob = new Blob([text], { type: mime });
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    document.body.appendChild(a); a.click();
-    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
-  }
-  function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'process'; }
-
-  function exportTemplate(id) {
-    var t = findTemplate(id);
-    download(JSON.stringify({ kind: 'bulk-ferment-template', version: 2, template: t }, null, 2),
-      slug(t.name) + '.json', 'application/json');
-    toast('Exported ' + t.name + '.');
-  }
-
-  function importTemplate() {
-    var input = document.createElement('input');
-    input.type = 'file'; input.accept = 'application/json,.json';
-    input.addEventListener('change', function () {
-      var file = input.files && input.files[0];
-      if (!file) return;
-      var reader = new FileReader();
-      reader.onload = function () {
-        try {
-          var data = JSON.parse(reader.result);
-          var raw = data && data.template ? data.template : data;
-          if (!raw || !Array.isArray(raw.stages) || !raw.stages.length) throw new Error('no stages');
-          var t = P.duplicateTemplate(P.normalizeTemplate(raw), raw.name || 'Imported process');
-          state.templates.push(t); save(); render();
-          toast('Imported “' + t.name + '” — ' + t.stages.length + ' stages.');
-        } catch (e) {
-          toast('That file is not a process export.');
-        }
-      };
-      reader.readAsText(file);
-    });
-    input.click();
-  }
-
-  // --------------------------------------------------------- planner view
-  /* Defaults come from what actually happened last time: the time-weighted mean
-   * dough temperature of the most recent bulk, not a guess. */
-  function lastBulkTemp() {
-    var done = state.bakes.filter(function (b) { return b.readings && b.readings.length > 1; })
-      .sort(function (a, b) { return b.startedAt - a.startedAt; })[0];
-    return done ? P.averageTemp(done.readings) : null;
-  }
-
-  function defaultFinish() {
-    var d = new Date();
-    d.setDate(d.getDate() + 2);
-    d.setHours(9, 45, 0, 0);
-    return d.getTime();
-  }
-
-  /* A span you are reading days ahead of, not counting down. "51 h" is the
-   * honest precision there; "51 h 4 min" is arithmetic pretending to be a
-   * forecast. Under half a day the minutes still mean something. */
-  function roughly(ms) {
-    var h = ms / H;
-    return h >= 12 ? Math.round(h) + ' h' : P.fmtHours(h);
-  }
-
-  // ------------------------------------------------------ full bake: entry
-  /* Full bake is recipe-first. You say what you are making and the schedule
-   * falls out of that plus now. The reverse planner is the other door, for
-   * when the deadline rather than the loaf is the fixed thing — the two used
-   * to land on the same screen, which made them look like one feature. */
-  function loafView() {
-    return '<div class="topbar"><button class="iconbtn" data-act="home">Back</button>' +
-      '<h1><span class="sub">Full bake</span>What are you <b>baking?</b></h1></div>' +
-      '<p class="note">Pick a loaf. From there the app walks the stages with you — starter feed to oven-out — ' +
-      'and keeps the clock while you do.</p>' +
-      '<div class="loaves">' + state.templates.map(loafCard).join('') + '</div>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn ghost" data-act="templates">Edit a loaf, or add another</button>';
-  }
-
-  function loafCard(t) {
-    var chain = P.chainStages(t);
-    var bulk = t.stages.filter(function (s) { return s.type === 'bulk'; })[0];
-    var endToEnd = chain.reduce(function (a, s) { return a + P.stageDurationMin(s, {}); }, 0) / 60;
-    /* To the nearest hour on a card. The minutes are a fiction anyway — this
-     * is a shape-of-the-day number, and the real one arrives on the next
-     * screen once the app knows when you are starting. */
-    return '<button class="loaf" data-act="loaf-pick" data-id="' + t.id + '">' +
-      '<b>' + esc(t.name) + '</b>' +
-      (t.description ? '<em>' + esc(t.description) + '</em>' : '') +
-      '<span class="meta">' + t.stages.length + ' stages · ' +
-      (endToEnd >= 2 ? '~' + Math.round(endToEnd) + ' h' : P.fmtHours(endToEnd)) + ' end to end' +
-      (bulk ? ' · bulk ' + n1(bulk.targetTempC) + ' °C' : '') + '</span></button>';
-  }
-
-  /* The one screen between picking a loaf and being in a bake. It answers the
-   * only two questions the schedule cannot answer for you — is the starter
-   * cold, and how warm is the kitchen — then shows the whole day it implies.
-   * Recomputed from the clock on every render, never stored half-planned. */
-  function readyView() {
-    var tpl = findTemplate(bakeSetup.templateId);
-    var now = Date.now();
-    var startAt = bakeSetup.startAt != null && bakeSetup.startAt > now ? bakeSetup.startAt : now;
-    var plan = P.planForward(tpl, {
-      startAt: startAt, bulkTempC: bakeSetup.bulkTempC, fromFridge: bakeSetup.fromFridge
-    });
-    var first = plan.events[0];
-    var later = startAt > now;
-
-    var out = '<div class="topbar"><button class="iconbtn" data-act="loaves">Back</button>' +
-      '<h1><span class="sub">' + esc(tpl.name) + '</span>' +
-      (later ? 'Start at <b>' + clock(startAt) + '?</b>' : 'Start <b>now?</b>') + '</h1></div>';
-
-    out += '<div class="hero setup"><div class="label">' +
-      (later ? 'First step, ' + roughly(startAt - now) + ' from now' : 'First step, straight away') + '</div>' +
-      '<div class="time small">' + esc(first ? first.name : 'Nothing to do — this loaf has no stages') + '</div>' +
-      (first ? '<div class="remain">Out of the oven <strong>' + clock(plan.params.finishAt) + '</strong>' +
-        dayTag(plan.params.finishAt, now) + ' — ' + roughly(plan.params.finishAt - now) + ' from now.</div>' : '') +
-      '</div>';
-
-    out += '<div class="toggle"><div class="t">Starter is in the fridge' +
-      '<em>' + (bakeSetup.fromFridge
-        ? 'Revival feeds go in first — that is most of the waiting.'
-        : 'Already up and active, so straight to the final feed.') + '</em></div>' +
-      '<button type="button" class="switch" role="switch" aria-checked="' + !!bakeSetup.fromFridge +
-      '" data-act="t-ready-fridge"><i></i></button></div>';
-
-    out += '<div class="toggle"><div class="t">Bulk around ' + n1(bakeSetup.bulkTempC) + ' °C' +
-      '<em>' + P.fmtHours(M.hoursAt(bakeSetup.bulkTempC)) + ' of bulk from the curve. Once you are in it the tracker ' +
-      're-reads it from the dough, so this only has to be close.</em></div>' +
-      '<button class="btn small ghost" data-act="ready-temp">Change</button></div>';
-
-    out += '<div class="section-title">The whole bake</div>' +
-      planNotes(plan, 'ready-opt') + bulkNote(plan) + planList(plan, false);
-
-    out += '<div class="actions">' +
-      '<button class="btn primary" data-act="ready-start">' + (later ? 'Arm this' : 'Start baking') + '</button>' +
-      '<button class="btn" data-act="mode-plan">Fixed finish time</button></div>' +
-      '<p class="note">Every time on this list is an estimate. Tick each stage off as you actually do it and ' +
-      'everything after it moves with you.</p>';
-    return out;
-  }
-
-  function plannerView() {
-    var d = state.draft;
-    var lastT = lastBulkTemp();
-    var params = (d && d.params) || {
-      finishAt: defaultFinish(),
-      bulkTempC: lastT == null ? 22 : Math.round(lastT * 2) / 2,
-      fromFridge: true,
-      templateId: (state.templates[0] || {}).id
-    };
-    var form = '<form id="planform">' +
-      '<label class="field">Process' +
-      '<select name="templateId">' + state.templates.map(function (t) {
-        return '<option value="' + t.id + '"' + (t.id === params.templateId ? ' selected' : '') + '>' + esc(t.name) + '</option>';
-      }).join('') + '</select></label>' +
-      '<label class="field">Bread out of the oven at' +
-      '<input name="finishAt" type="datetime-local" value="' + localInput(params.finishAt) + '" required></label>' +
-      '<label class="field">Expected dough temperature during bulk °C' +
-      '<input name="bulkTempC" type="number" inputmode="decimal" step="0.5" min="10" max="35" value="' + params.bulkTempC + '" required></label>' +
-      '<p class="hint">' + (lastT == null
-        ? 'No finished bulk to learn from yet — 22 °C is a reasonable kitchen.'
-        : 'Your last bulk averaged ' + n1(lastT) + ' °C.') +
-      ' At ' + n1(params.bulkTempC) + ' °C the model gives ' + P.fmtHours(M.hoursAt(params.bulkTempC)) + ' of bulk.</p>' +
-      '<div class="toggle"><div class="t">Starter is in the fridge' +
-      '<em>' + (params.fromFridge ? 'Revival feeds will be scheduled first.' : 'Already at room temperature and active — revival feeds skipped.') + '</em></div>' +
-      '<button type="button" class="switch" role="switch" aria-checked="' + !!params.fromFridge + '" data-act="t-fridge"><i></i></button></div>' +
-      '<div class="err" id="planerr"></div>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn primary" type="submit">' + (d ? 'Work it out again' : 'Work it out') + '</button>' +
-      '</form>';
-
-    return '<div class="topbar"><button class="iconbtn" data-act="home">Back</button>' +
-      '<h1><span class="sub">Plan backwards</span>When should the loaf <b>leave the oven?</b></h1></div>' +
-      form + (d ? draftBlock(d) : '');
-  }
-
-  /* What went wrong, the ways out, and what the planner moved on your behalf.
-   * Both directions produce the same three things, so both render them the
-   * same way — only the button that applies an escape differs. */
-  function planNotes(d, applyAct) {
-    var out = '';
-    d.problems.forEach(function (pr) {
-      out += '<div class="callout warn"><b>' + (
-        pr.kind === 'pinned-night' ? 'That bake time puts you in the kitchen at night'
-          : pr.kind === 'from-start' ? 'Starting now puts you in the kitchen at night'
-            : 'The cold proof cannot absorb this') +
-        '</b>' + esc(pr.text) + '</div>';
-    });
-    if (d.options.length) {
-      out += '<div class="callout"><b>Ways out</b><ul>' +
-        d.options.map(function (o) {
-          return '<li>' + esc(o.text) + ' <button class="linkbtn" data-act="' + applyAct + '" data-id="' + o.kind + '">Use this</button></li>';
-        }).join('') + '</ul></div>';
-    }
-    if (d.adjustments.length) {
-      out += '<div class="callout"><b>What it moved for you</b><ul>' +
-        d.adjustments.map(function (a) { return '<li>' + esc(a.text) + '</li>'; }).join('') + '</ul></div>';
-    }
-    return out;
-  }
-
-  function bulkNote(d) {
-    var bulk = d.events.filter(function (e) { return e.chain && e.type === 'bulk'; })[0];
-    if (!bulk) return '';
-    return '<p class="note">Bulk is ' + P.fmtHours((bulk.end - bulk.start) / H) + ' because that is 1 ÷ r(' +
-      n1(d.params.bulkTempC) + ' °C) from the fitted curve. Run colder and it lengthens; the live tracker will re-read it from the dough.</p>';
-  }
-
-  /* Draggable only where dragging means something. On the reverse plan a row
-   * is a thing you negotiate with; on the way into a bake it is a preview. */
-  function planList(d, draggable) {
-    var out = '<ul class="plan">';
-    d.days.forEach(function (day) {
-      out += '<li class="planday">' + new Date(day.dateMs).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' }) + '</li>';
-      day.events.forEach(function (e) {
-        if (e.container) return;
-        out += planRow(e, draggable);
-      });
-    });
-    return out + '</ul>';
-  }
-
-  function draftBlock(d) {
-    return '<div class="section-title">The schedule</div>' +
-      planNotes(d, 'opt-apply') + bulkNote(d) + planList(d, true) +
-      '<div class="actions">' +
-      '<button class="btn primary" data-act="plan-start">Start this plan</button>' +
-      '<button class="btn" data-act="plan-ics">Export .ics</button></div>' +
-      '<p class="note">Drag a row sideways to move it — everything after it follows. Tap it to type an exact time.</p>';
-  }
-
-  function planRow(e, draggable) {
-    var night = P.isNight(e.start) && e.handsOn;
-    return '<li class="planrow' + (night ? ' night' : '') + (e.kind === 'rep' || e.kind === 'bake-step' ? ' sub' : '') + '"' +
-      (draggable ? ' data-drag="' + e.id + '"' : '') + '>' +
-      '<span class="when">' + clock(e.start) + '</span>' +
-      '<span class="what"><b>' + esc(e.name) + '</b><em>' + esc(e.detail || '') + '</em>' +
-      (e.end > e.start ? '<em class="til">until ' + clock(e.end) + dayTag(e.end, e.start) + ' · ' + dur(e.end - e.start) + '</em>' : '') +
-      '</span>' + (draggable ? '<span class="grip" aria-hidden="true">⋮⋮</span>' : '') + '</li>';
-  }
-
-  function computePlan(form) {
-    var f = form.elements;
-    var tpl = findTemplate(f.templateId.value);
-    var finishAt = fromLocalInput(f.finishAt.value);
-    var bulkTempC = parseFloat(f.bulkTempC.value);
-    var fridgeBtn = document.querySelector('[data-act="t-fridge"]');
-    var fromFridge = fridgeBtn ? fridgeBtn.getAttribute('aria-checked') === 'true' : true;
-    var e = document.getElementById('planerr');
-    if (!tpl) { e.textContent = 'Pick a process.'; return; }
-    if (finishAt == null) { e.textContent = 'That finish time is not valid.'; return; }
-    if (!isFinite(bulkTempC) || bulkTempC < M.TEMP_MIN || bulkTempC > M.TEMP_MAX) {
-      e.textContent = 'Bulk temperature has to be between ' + M.TEMP_MIN + ' and ' + M.TEMP_MAX + ' °C.'; return;
-    }
-    state.draft = P.planBackwards(tpl, { finishAt: finishAt, bulkTempC: bulkTempC, fromFridge: fromFridge });
-    save(); render();
-    var first = state.draft.events[0];
-    toast('Starts ' + clock(first.start) + dayTag(first.start) + ' with ' + first.name.toLowerCase() + '.');
-  }
-
-  function applyOption(kind) {
-    var d = state.draft;
-    var o = d.options.filter(function (x) { return x.kind === kind; })[0];
-    if (!o) return;
-    var params = Object.assign({}, d.params);
-    if (o.bulkTempC != null) params.bulkTempC = o.bulkTempC;
-    if (o.finishAt != null) params.finishAt = o.finishAt;
-    state.draft = P.planBackwards(findTemplate(params.templateId), params);
-    save(); render(); toast('Replanned.');
-  }
-
-  function nudgeSheet(id) {
-    var e = state.draft.events.filter(function (x) { return x.id === id; })[0];
-    if (!e) return;
-    openSheet('<h2>' + esc(e.name) + '</h2>' +
-      '<p class="hint">' + (e.chain ? 'Everything after this moves with it.' : 'This one moves on its own.') + '</p>' +
-      '<label class="field">Starts at<input id="nz-time" type="datetime-local" value="' + localInput(e.start) + '"></label>' +
-      '<div class="err" id="sheeterr"></div>' +
-      '<div class="row"><button class="btn ghost" data-act="cancel">Cancel</button>' +
-      '<button class="btn primary" data-act="nz-save">Move it</button></div>',
-      function (sheet) {
-        sheet.addEventListener('click', function (ev2) {
-          if (ev2.target.dataset.act === 'cancel') return closeSheet();
-          if (ev2.target.dataset.act !== 'nz-save') return;
-          var t = fromLocalInput(sheet.querySelector('#nz-time').value);
-          if (t == null) return err('That time is not valid.');
-          P.nudgeEvent(state.draft, id, t);
-          save(); closeSheet(); render(); toast('Moved — the rest followed.');
-        });
-      });
-  }
-
-  // ------------------------------------------------------- process: state
-  function bulkRecord(proc) {
-    if (!proc || !proc.bulkBakeId) return null;
-    return state.bakes.filter(function (b) { return b.id === proc.bulkBakeId; })[0] || null;
-  }
-  function projectProcess(proc, now) {
-    var rec = bulkRecord(proc);
-    var st = rec && rec.readings.length ? M.stateAt(rec.readings, now) : null;
-    return P.projectTimeline(proc, now, st);
-  }
-  function procEvent(proc, id) {
-    return proc.events.filter(function (e) { return e.id === id; })[0] || null;
-  }
-  function chainOf(proc) {
-    return proc.events.filter(function (e) { return e.chain; })
-      .sort(function (a, b) { return a.chainIndex - b.chainIndex; });
-  }
-
-  /* Ticking a stage off writes the real time and hands the baton on. The next
-   * stage starts exactly when this one ended — that is the whole reconciliation:
-   * projectTimeline rebuilds every downstream projection from these two facts. */
-  function completeStage(proc, id) {
-    var now = Date.now();
-    var chain = chainOf(proc);
-    var e = procEvent(proc, id);
-    if (!e) return;
-    if (!e.chain) {
-      e.actualStart = e.actualStart == null ? now : e.actualStart;
-      e.actualEnd = now;
-      save(); render(); toast(e.name + ' — done.');
-      return;
-    }
-    if (e.actualStart == null) e.actualStart = now;
-    e.actualEnd = now;
-    var next = chain[chain.findIndex(function (x) { return x.id === e.id; }) + 1];
-    if (e.type === 'bulk') endBulkRecord(proc);
-    if (!next) { finishProcess(proc); return; }
-    if (next.type === 'bulk') { save(); beginBulk(proc, next, now); return; }
-    next.actualStart = now;
-    save(); render();
-    toast(e.name + ' done · ' + next.name + ' now.');
-  }
-
-  function startStage(proc, id) {
-    var now = Date.now();
-    var e = procEvent(proc, id);
-    if (!e) return;
-    if (e.type === 'bulk') return beginBulk(proc, e, now);
-    e.actualStart = now;
-    save(); render(); toast(e.name + ' started.');
-  }
-
-  /* The handoff. A bulk stage does not get its own timer — it gets the existing
-   * engine: a real bake record, a first dough temperature, the same accumulator,
-   * chart and alerts the standalone tracker uses. */
-  function beginBulk(proc, ev, at) {
-    var lastT = lastBulkTemp();
-    var stage = P.findStage(proc.template, ev.stageId) || {};
-    numberSheet({
-      title: 'Dough temperature',
-      hint: 'This starts the bulk and the accumulator. Target for this process is ' + n1(stage.targetTempC == null ? 24 : stage.targetTempC) + ' °C.',
-      value: Math.round((lastT == null ? (stage.targetTempC == null ? 24 : stage.targetTempC) : lastT) * 10) / 10,
-      step: 0.5, min: M.TEMP_MIN, max: M.TEMP_MAX, unit: '°C',
-      onSave: function (temp) {
-        var now = Date.now();
-        var bake = {
-          id: uid(), name: proc.name + ' — bulk', notes: proc.template.name,
-          startedAt: now, status: 'active',
-          readings: [{ id: uid(), t: now, temp: temp, rise: null, gapTemp: null }],
-          alerts: { lead: null, end: null }, crumb: '', finalCal: 1,
-          useJar: !!state.settings.useJar, processId: proc.id
-        };
-        state.bakes.push(bake);
-        state.activeId = bake.id;
-        proc.bulkBakeId = bake.id;
-        var e = procEvent(proc, ev.id);
-        e.actualStart = now;
-        save(); closeSheet(); render(); unlockAudio();
-        toast('Bulk started at ' + n1(temp) + ' °C — the model takes it from here.');
-      }
-    });
-  }
-
-  function endBulkRecord(proc) {
-    var rec = bulkRecord(proc);
-    if (!rec) return;
-    rec.finishedAt = Date.now();
-    rec.finalCal = M.replay(rec.readings).cal;
-    rec.status = 'done';
-    if (state.activeId === rec.id) state.activeId = null;
-  }
-
-  function finishProcess(proc) {
-    endBulkRecord(proc);
-    proc.status = 'done';
-    proc.finishedAt = Date.now();
-    state.activeProcessId = null;
-    save(); view = 'history'; openBakeId = proc.id; render();
-    toast('Bake finished. Add the crumb note when you cut it.');
-  }
-
-  // -------------------------------------------------------- process: view
-  function processView(proc) {
-    var now = Date.now();
-    var tl = projectProcess(proc, now);
-    var cur = tl.current;
-    var rec = bulkRecord(proc);
-    var inBulk = cur && cur.type === 'bulk' && rec && rec.readings.length;
-
-    var head = '<div class="topbar">' +
-      '<h1><span class="sub">' + esc(proc.template.name) +
-      (tl.started ? ' · ' + tl.chain.filter(function (e) { return e.actualEnd != null; }).length + '/' + tl.chain.length + ' done' : ' · not started') +
-      '</span>' + esc(proc.name) + '</h1>' +
-      '<button class="iconbtn" data-act="home" aria-label="Home">Home</button>' +
-      '<button class="iconbtn" data-act="proc-menu" aria-label="Menu">•••</button></div>';
-
-    if (!cur) {
-      return head + '<div class="hero ready"><div class="label">Finished</div>' +
-        '<div class="time">Every stage ticked off.</div></div>' +
-        '<button class="btn primary" data-act="proc-finish">Close this bake</button>' +
-        processTimeline(proc, tl, now);
-    }
-
-    return head + feedBand(tl, now) + nowCard(proc, tl, cur, rec, now) +
-      (inBulk ? bulkTakeover(rec, now) : '') +
-      nextCard(tl, now) +
-      processTimeline(proc, tl, now);
-  }
-
-  /* Starter feeds run on their own clock, days before the dough exists. They
-   * are not in the chain, so the Now card would sail straight past them —
-   * this band puts a due feed in front of you until you tick it. */
-  function feedBand(tl, now) {
-    /* Once the stage the final feed was timed for has begun, the starter is in
-     * the dough and no feed prompt is worth the screen space. */
-    var target = tl.events.filter(function (e) { return e.feedRole === 'final'; })[0];
-    var consumed = target && tl.chain.filter(function (e) {
-      return e.stageId === target.anchorStageId && e.actualStart != null;
-    })[0];
-    if (consumed) return '';
-    var feeds = tl.events.filter(function (e) { return e.kind === 'feed' && e.actualEnd == null; })
-      .sort(function (a, b) { return a.start - b.start; });
-    if (!feeds.length) return '';
-    var due = feeds.filter(function (e) { return e.start <= now; });
-    var upcoming = feeds.filter(function (e) { return e.start > now; })[0];
-    function band(e, isDue) {
-      return '<div class="subcount' + (isDue ? ' due' : '') + '">' +
-        '<span class="k">' + esc(e.name) + '</span>' +
-        '<span class="v">' + (isDue ? 'due ' : 'in ' + dur(e.start - now) + ' · ') + clock(e.start) + dayTag(e.start, now) + '</span>' +
-        '<button class="btn small" data-act="proc-tick" data-id="' + e.id + '">Done</button></div>';
-    }
-    var out = due.map(function (e) { return band(e, true); }).join('');
-    if (!due.length && upcoming && !tl.started) out += band(upcoming, false);
-    return out;
-  }
-
-  function nowCard(proc, tl, cur, rec, now) {
-    var running = cur.actualStart != null;
-    var timed = cur.durationMin > 0 && cur.type !== 'bulk' && cur.type !== 'cold-proof';
-    var judgement = cur.judgement;
-    var st = rec && rec.readings.length ? M.stateAt(rec.readings, now) : null;
-
-    var hero;
-    if (!running) {
-      hero = '<div class="hero now"><div class="label">Up now</div>' +
-        '<div class="time small">' + esc(cur.name) + '</div>' +
-        '<div class="remain">' + (tl.started ? 'Planned for ' + clock(cur.start) + dayTag(cur.start, now) : 'Start when you are ready.') + '</div></div>';
-    } else if (cur.type === 'bulk' && st) {
-      hero = st.ready
-        ? '<div class="hero now ready"><div class="label">' + esc(cur.name) + '</div>' +
-          '<div class="time">Ready — go read the dough.</div>' +
-          '<div class="remain">Hit 100% ' + dur(now - st.predictedEnd) + ' ago. It is still your call.</div></div>'
-        : '<div class="hero now"><div class="label">' + esc(cur.name) + ' ends about</div>' +
-          '<div class="time">' + clock(st.predictedEnd) + '</div>' +
-          '<div class="remain"><strong>' + dur(st.msRemaining) + '</strong> to go' + dayTag(st.predictedEnd, now) +
-          ' · ' + Math.round(st.progress * 100) + '% through</div></div>';
-    } else {
-      var left = cur.end - now;
-      var over = left <= 0;
-      hero = '<div class="hero now' + (over ? ' ready' : '') + '"><div class="label">' + esc(cur.name) +
-        (timed ? (over ? ' — time is up' : ' ends at') : '') + '</div>' +
-        (timed && !over ? '<div class="time">' + clock(cur.end) + '</div>' : '<div class="time small">' + (over ? 'Ready when you are.' : dur(now - cur.start) + ' in') + '</div>') +
-        '<div class="remain">' + (timed && !over ? '<strong>' + dur(left) + '</strong> to go' : 'Running ' + dur(now - cur.start)) +
-        (judgement ? ' · you decide when it is done' : '') + '</div></div>';
-    }
-
-    var sub = '';
-    if (tl.nextSub) {
-      var s2 = tl.nextSub;
-      var due = s2.start - now;
-      sub = '<div class="subcount' + (due <= 0 ? ' due' : '') + '">' +
-        '<span class="k">' + esc(s2.name) + '</span>' +
-        '<span class="v">' + (due <= 0 ? 'due now' : 'in ' + dur(due)) + ' · ' + clock(s2.start) + '</span>' +
-        '<button class="btn small" data-act="proc-tick" data-id="' + s2.id + '">Done</button></div>';
-    }
-
-    var body = '';
-    if (cur.notes) body += '<div class="doing">' + esc(cur.notes) + '</div>';
-    if (cur.cues.length) {
-      body += '<div class="cuebox"><div class="lede">Before you call it:</div><ul>' +
-        cur.cues.map(function (c) { return '<li>' + esc(c) + '</li>'; }).join('') + '</ul>' +
-        '<div class="note">The app can say ready. It cannot say done.</div></div>';
-    }
-
-    var btn = !running
-      ? '<button class="btn primary" data-act="proc-start" data-id="' + cur.id + '">Start ' + esc(cur.name.toLowerCase()) + '</button>'
-      : '<button class="btn primary" data-act="proc-tick" data-id="' + cur.id + '">' +
-        (cur.judgement ? 'Confirm ' + esc(cur.name.toLowerCase()) + ' is done' : 'Done — next stage') + '</button>';
-
-    return hero + sub + body +
-      '<div class="actions" style="grid-template-columns:1fr">' + btn + '</div>' +
-      '<button class="btn small ghost" data-act="proc-note" data-id="' + cur.id + '">' +
-      (cur.log ? 'Note: ' + esc(cur.log.slice(0, 40)) + (cur.log.length > 40 ? '…' : '') : 'Scribble a note on this stage') + '</button>';
-  }
-
-  /* The bulk stage does not get a reimplementation. It gets the tracker. */
-  function bulkTakeover(rec, now) {
-    var st = M.stateAt(rec.readings, now);
-    var jar = usesJar(rec);
-    return '<div class="section-title">Bulk — live from the dough</div>' +
-      '<div class="stats">' +
-      '<div class="stat"><div class="k">Progress</div><div class="v">' + Math.round(st.progress * 100) + '<small>%</small></div>' +
-      '<div class="progressbar' + (st.ready ? ' ready' : '') + '"><i style="width:' + Math.max(0, Math.min(100, st.progress * 100)) + '%"></i></div></div>' +
-      '<div class="stat"><div class="k">Dough temp</div><div class="v">' + n1(st.currentTemp) + '<small>°C</small></div>' +
-      (st.extrapolated ? '<span class="flag">extrapolated</span>' : '<div class="k" style="margin-top:8px">as of ' + clock(lastTempAt(rec)) + '</div>') + '</div>' +
-      '<div class="stat"><div class="k">Target rise</div><div class="v">' + Math.round(st.target) + '<small>%</small></div>' +
-      '<div class="k" style="margin-top:8px">at ' + n1(st.currentTemp) + '°C</div></div>' +
-      '<div class="stat"><div class="k">Expected rise now</div><div class="v">' + Math.round(st.expectedRise) + '<small>%</small></div>' +
-      '<div class="k" style="margin-top:8px">' + (jar ? 'jar should be here' : 'dough should be here') + '</div></div>' +
-      ((jar || st.calibrated) ? '<div class="stat wide"><div class="v">' + esc(M.calibrationPhrase(st.cal)) + '</div>' +
-        (st.calibrated ? '<button class="btn small ghost" style="width:auto;flex:0 0 auto" data-act="resetcal">Reset</button>' : '') + '</div>' : '') +
-      '</div>' +
-      chartSVG(rec.readings, now) +
-      (st.gapPending ? '<p class="note center">No reading for ' + dur(st.sinceLastMs) + ' — the next entry will ask what happened in between.</p>' : '') +
-      '<div class="actions"' + (jar ? '' : ' style="grid-template-columns:1fr"') + '>' +
-      '<button class="btn primary" data-act="logtemp">Log temp</button>' +
-      (jar ? '<button class="btn" data-act="lograise">Log rise %</button>' : '') +
-      '</div>' +
-      readingsList(rec);
-  }
-
-  function nextCard(tl, now) {
-    if (!tl.next) return '';
-    return '<div class="nextup"><span class="k">Next up</span>' +
-      '<b>' + esc(tl.next.name) + '</b>' +
-      '<em>' + clock(tl.next.start) + dayTag(tl.next.start, now) + ' · ' + esc(tl.next.detail || '') + '</em></div>';
-  }
-
-  function processTimeline(proc, tl, now) {
-    var subsBy = {};
-    tl.events.forEach(function (e) {
-      if (e.chain || !e.anchor) return;
-      (subsBy[e.anchor] = subsBy[e.anchor] || []).push(e);
-    });
-    var feeds = tl.events.filter(function (e) { return e.kind === 'feed'; });
-
-    function row(e, isSub) {
-      var cls = 'tlrow ' + e.status + (isSub ? ' sub' : '');
-      var stamp = e.actualEnd != null
-        ? 'done ' + clock(e.actualEnd) + (e.plannedStart != null && Math.abs(e.actualEnd - (e.plannedEnd == null ? e.actualEnd : e.plannedEnd)) > 6 * MIN
-          ? ' · ' + dur(Math.abs(e.actualEnd - e.plannedEnd)) + (e.actualEnd > e.plannedEnd ? ' late' : ' early') : '')
-        : (e.end > e.start ? 'until ' + clock(e.end) : '');
-      return '<li class="' + cls + '">' +
-        '<span class="when">' + clock(e.start) + '<em>' + dayTag(e.start, now).trim() + '</em></span>' +
-        '<span class="what"><b>' + esc(e.name) + '</b>' +
-        '<em>' + esc(stamp) + (e.fromAccumulator ? ' · from the dough, not the plan' : '') + '</em>' +
-        (e.log ? '<em class="cue">' + esc(e.log) + '</em>' : '') + '</span>' +
-        (e.actualEnd == null && e.status !== 'future'
-          ? '<button class="edit" data-act="proc-tick" data-id="' + e.id + '">Tick</button>'
-          : '<button class="edit" data-act="proc-note" data-id="' + e.id + '">Note</button>') +
-        '</li>';
-    }
-
-    var out = '<div class="section-title">Timeline' +
-      '<button class="linkbtn" data-act="tl-toggle">' + (timelineOpen ? 'hide' : 'show') + '</button></div>';
-    if (!timelineOpen) return out;
-    out += '<ul class="timeline">';
-    feeds.forEach(function (e) { out += row(e, false); });
-    tl.chain.forEach(function (e) {
-      out += row(e, false);
-      (subsBy[e.stageId] || []).sort(function (a, b) { return a.start - b.start; })
-        .forEach(function (sb) { out += row(sb, true); });
-    });
-    out += '</ul>';
-    return out;
-  }
-
-  function stageNoteSheet(proc, id) {
-    var e = procEvent(proc, id);
-    if (!e) return;
-    openSheet('<h2>' + esc(e.name) + '</h2>' +
-      '<p class="hint">Dough temp at the mix, how it felt, what the kitchen was doing. Kept with the bake.</p>' +
-      '<label class="field">Note<textarea id="sn-text" placeholder="Dough 23.4 °C at mix. Kitchen cold, window open all afternoon.">' + esc(e.log || '') + '</textarea></label>' +
-      '<div class="row"><button class="btn ghost" data-act="cancel">Cancel</button>' +
-      '<button class="btn primary" data-act="sn-save">Save</button></div>',
-      function (sheet) {
-        sheet.addEventListener('click', function (ev2) {
-          if (ev2.target.dataset.act === 'cancel') return closeSheet();
-          if (ev2.target.dataset.act !== 'sn-save') return;
-          e.log = sheet.querySelector('#sn-text').value.trim();
-          save(); closeSheet(); render(); toast('Noted.');
-        });
-      });
-  }
-
-  function processMenuSheet() {
-    var proc = activeProcess();
-    var s = state.settings;
-    openSheet('<h2>' + esc(proc.name) + '</h2>' +
-      '<div class="toggle"><div class="t">Alarm sound<em>Every timed stage and every fold.</em></div>' +
-      '<button class="switch" role="switch" aria-checked="' + !!s.sound + '" data-act="t-sound"><i></i></button></div>' +
-      '<div class="toggle"><div class="t">Browser notification<em>' + notifyStatus() + '</em></div>' +
-      '<button class="switch" role="switch" aria-checked="' + !!s.notify + '" data-act="t-notify"><i></i></button></div>' +
-      '<div class="toggle"><div class="t">Keep screen awake<em>' + ('wakeLock' in navigator ? 'Held while this view is open.' : 'Not supported in this browser.') + '</em></div>' +
-      '<button class="switch" role="switch" aria-checked="' + !!s.wakeLock + '" data-act="t-wake"><i></i></button></div>' +
-      '<label class="field">Lead-time alert, minutes before a stage ends' +
-      '<input id="lead" type="number" inputmode="numeric" step="5" min="0" max="180" value="' + s.leadMin + '"></label>' +
-      '<div class="section-title">Night</div>' +
-      nightChoices() +
-      '<div class="spacer"></div>' +
-      '<button class="btn small ghost" data-act="proc-ics">Export the rest of this bake as .ics</button>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn small ghost" data-act="history">History &amp; export</button>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn small" data-act="proc-finish">Finish this bake</button>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn small danger" data-act="proc-abandon">Abandon this bake</button>',
-      function (sheet) {
-        sheet.querySelector('#lead').addEventListener('change', function (e) {
-          state.settings.leadMin = M.clamp(parseInt(e.target.value, 10) || 0, 0, 180);
-          save(); syncAlerts(); toast('Alert set for ' + state.settings.leadMin + ' min before.');
-        });
-        sheet.addEventListener('click', function (e) {
-          var act = e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
-          if (act === 't-sound') { s.sound = !s.sound; save(); processMenuSheet(); }
-          if (act === 't-wake') { s.wakeLock = !s.wakeLock; save(); processMenuSheet(); if (s.wakeLock) ensureWakeLock(); else releaseWakeLock(); }
-          if (act === 't-notify') {
-            if (!s.notify && 'Notification' in window) {
-              Notification.requestPermission().then(function (pm) {
-                s.notify = pm === 'granted'; save(); processMenuSheet();
-                if (pm !== 'granted') toast('Notifications are blocked in browser settings.');
-              });
-            } else { s.notify = false; save(); processMenuSheet(); }
-          }
-          if (act === 'proc-abandon') {
-            closeSheet();
-            confirmSheet('Abandon this bake?', 'It stays in history with everything you ticked off, but the tracking stops here.', 'Abandon', function () {
-              endBulkRecord(proc);
-              proc.status = 'abandoned'; proc.finishedAt = Date.now();
-              state.activeProcessId = null;
-              save(); view = 'home'; render(); toast('Bake abandoned.');
-            });
-          }
-        });
-      });
   }
 
   /* Auto is the honest default — the app knows what time it is. The manual
@@ -1477,14 +434,14 @@
       sheet.addEventListener('click', function (e) {
         var act = e.target.dataset.act;
         if (act === 'inc' || act === 'dec') {
-          var v = parseFloat(input.value);
+          var v = parseNum(input.value);
           if (isNaN(v)) v = opts.value == null ? 0 : opts.value;
           v = M.clamp(v + (act === 'inc' ? 1 : -1) * opts.step, opts.min, opts.max);
           input.value = Math.round(v * 100) / 100;
         }
         if (act === 'cancel') closeSheet();
         if (act === 'save') {
-          var val = parseFloat(input.value);
+          var val = parseNum(input.value);
           if (isNaN(val)) return err('Enter a number.');
           opts.onSave(val, sheet);
         }
@@ -1503,7 +460,12 @@
         else if (ch === '.') { if (cur.indexOf('.') < 0) input.value = (cur || '0') + '.'; }
         else input.value = cur === '0' ? ch : cur + ch;
       });
-      input.addEventListener('input', function () { fresh = false; });
+      /* A comma typed on the phone's own keyboard becomes a point as it lands,
+       * so what you see in the big field is what gets saved. */
+      input.addEventListener('input', function () {
+        fresh = false;
+        if (input.value.indexOf(',') >= 0) input.value = input.value.replace(/,/g, '.');
+      });
       input.addEventListener('keydown', function (e) { if (e.key === 'Enter') sheet.querySelector('[data-act="save"]').click(); });
     });
   }
@@ -1536,7 +498,7 @@
       '</div>' +
       '<div id="gapinterim" hidden>' +
       '<label class="field">Roughly what temperature across those hours?' +
-      '<input id="gaptemp" type="number" inputmode="decimal" step="0.5" min="10" max="35"></label>' +
+      '<input id="gaptemp" type="text" inputmode="decimal" autocomplete="off"></label>' +
       '<div class="err" id="sheeterr"></div>' +
       '<div class="row"><button class="btn ghost" data-act="cancel">Cancel</button>' +
       '<button class="btn primary" data-act="gapsave">Apply across the gap</button></div></div>',
@@ -1553,7 +515,7 @@
           }
           if (e.target.dataset.act === 'cancel') closeSheet();
           if (e.target.dataset.act === 'gapsave') {
-            var v = parseFloat(sheet.querySelector('#gaptemp').value);
+            var v = parseNum(sheet.querySelector('#gaptemp').value);
             if (isNaN(v) || v < M.TEMP_MIN || v > M.TEMP_MAX) return err('Enter a temperature between ' + M.TEMP_MIN + ' and ' + M.TEMP_MAX + '°C.');
             closeSheet(); done(v);
           }
@@ -1627,11 +589,11 @@
       '<p class="hint">Everything after this is recalculated from scratch.</p>' +
       '<label class="field">Time<input id="e-time" type="datetime-local" value="' + localInput(r.t) + '"></label>' +
       '<label class="field">Dough temp °C — blank to leave it out' +
-      '<input id="e-temp" type="number" inputmode="decimal" step="0.1" min="10" max="35" value="' + (r.temp == null ? '' : r.temp) + '"></label>' +
+      '<input id="e-temp" type="text" inputmode="decimal" autocomplete="off" value="' + (r.temp == null ? '' : r.temp) + '"></label>' +
       '<label class="field">Jar rise % — blank to leave it out' +
-      '<input id="e-rise" type="number" inputmode="decimal" step="1" min="0" max="400" value="' + (r.rise == null ? '' : r.rise) + '"></label>' +
+      '<input id="e-rise" type="text" inputmode="decimal" autocomplete="off" value="' + (r.rise == null ? '' : r.rise) + '"></label>' +
       '<label class="field">Interim temp across the gap before this reading °C' +
-      '<input id="e-gap" type="number" inputmode="decimal" step="0.5" min="10" max="35" value="' + (r.gapTemp == null ? '' : r.gapTemp) + '"></label>' +
+      '<input id="e-gap" type="text" inputmode="decimal" autocomplete="off" value="' + (r.gapTemp == null ? '' : r.gapTemp) + '"></label>' +
       '<div class="err" id="sheeterr"></div>' +
       '<div class="row"><button class="btn ghost" data-act="cancel">Cancel</button>' +
       '<button class="btn primary" data-act="esave">Save</button></div>' +
@@ -1649,7 +611,7 @@
             return;
           }
           if (act === 'esave') {
-            var num = function (sel) { var v = parseFloat(sheet.querySelector(sel).value); return isNaN(v) ? null : v; };
+            var num = function (sel) { var v = parseNum(sheet.querySelector(sel).value); return isNaN(v) ? null : v; };
             var t = fromLocalInput(sheet.querySelector('#e-time').value);
             if (t == null) return err('That time is not valid.');
             var cand = { id: id, t: t, temp: num('#e-temp'), rise: num('#e-rise'), gapTemp: num('#e-gap') };
@@ -1750,42 +712,9 @@
     toast(abandoned ? 'Bake abandoned.' : 'Bake finished — add the crumb result when you cut it.');
   }
 
-  function startPlan() {
-    var d = state.draft;
-    var proc = P.commitPlan(d, findTemplate(d.params.templateId).name + ' — ' +
-      new Date(d.params.finishAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }));
-    state.processes.push(proc);
-    state.activeProcessId = proc.id;
-    state.draft = null;
-    save(); view = 'process'; render(); unlockAudio();
-    var first = chainOf(proc)[0];
-    toast('Plan armed. First up: ' + (proc.events[0] || first).name + ' at ' + clock((proc.events[0] || first).plannedStart) + '.');
-  }
-
-  /* Committing the forward plan. Same commit as the reverse one — a full bake
-   * is a full bake however you arrived at it — so the process view, the
-   * reconciliation and the bulk takeover are all the existing code. */
-  function startForward() {
-    var tpl = findTemplate(bakeSetup.templateId);
-    var now = Date.now();
-    var startAt = bakeSetup.startAt != null && bakeSetup.startAt > now ? bakeSetup.startAt : now;
-    var plan = P.planForward(tpl, {
-      startAt: startAt, bulkTempC: bakeSetup.bulkTempC, fromFridge: bakeSetup.fromFridge
-    });
-    var proc = P.commitPlan(plan, tpl.name + ' — ' +
-      new Date(startAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }));
-    state.processes.push(proc);
-    state.activeProcessId = proc.id;
-    bakeSetup = null;
-    save(); view = 'process'; render(); unlockAudio();
-    var first = proc.events[0];
-    toast(first ? (startAt > now ? 'Armed. First up: ' + first.name + ' at ' + clock(first.plannedStart) + '.'
-      : 'Started. First up: ' + first.name + '.') : 'Bake started.');
-  }
-
   function startBake(form) {
     var f = form.elements;
-    var temp = parseFloat(f.temp.value);
+    var temp = parseNum(f.temp.value);
     if (isNaN(temp) || temp < M.TEMP_MIN || temp > M.TEMP_MAX) {
       document.getElementById('starterr').textContent = 'Enter a dough temperature between ' + M.TEMP_MIN + ' and ' + M.TEMP_MAX + '°C.';
       return;
@@ -1836,42 +765,6 @@
   }
   function round(v, n) { var p = Math.pow(10, n); return Math.round(v * p) / p; }
 
-  /* Planned against actual, one row per stage. This is the file that answers
-   * "does the plan hold up in my kitchen" after a few bakes. */
-  function exportStagesCSV() {
-    var rows = [['bake_id', 'bake_name', 'template', 'status', 'bulk_temp_planned_c', 'cold_proof_h',
-      'stage_order', 'stage', 'type', 'planned_start', 'planned_end', 'planned_min',
-      'actual_start', 'actual_end', 'actual_min', 'drift_min', 'note']];
-    state.processes.slice().sort(function (a, b) { return a.createdAt - b.createdAt; }).forEach(function (p2) {
-      var tl = projectProcess(p2, p2.finishedAt || Date.now());
-      tl.events.forEach(function (e, i) {
-        if (e.container) return;
-        rows.push([p2.id, p2.name, p2.template.name, p2.status || 'active',
-          round(p2.params.bulkTempC, 1), round(p2.params.coldMin / 60, 2),
-          e.chain ? e.chainIndex : '', e.name, e.type,
-          e.plannedStart == null ? '' : new Date(e.plannedStart).toISOString(),
-          e.plannedEnd == null ? '' : new Date(e.plannedEnd).toISOString(),
-          e.plannedEnd == null ? '' : round((e.plannedEnd - e.plannedStart) / MIN, 1),
-          e.actualStart == null ? '' : new Date(e.actualStart).toISOString(),
-          e.actualEnd == null ? '' : new Date(e.actualEnd).toISOString(),
-          e.actualEnd == null || e.actualStart == null ? '' : round((e.actualEnd - e.actualStart) / MIN, 1),
-          e.actualEnd == null || e.plannedEnd == null ? '' : round((e.actualEnd - e.plannedEnd) / MIN, 1),
-          e.log || '']);
-      });
-    });
-    download(toCSV(rows), 'bakes-stages-' + new Date().toISOString().slice(0, 10) + '.csv', 'text/csv');
-    toast('Exported ' + (rows.length - 1) + ' stages.');
-  }
-
-  function toCSV(rows) {
-    return rows.map(function (r) {
-      return r.map(function (c) {
-        c = String(c);
-        return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c;
-      }).join(',');
-    }).join('\n');
-  }
-
   // -------------------------------------------------------------- alerts
   var timers = [];
   function clearTimers() { timers.forEach(clearTimeout); timers = []; }
@@ -1879,7 +772,6 @@
   function syncAlerts() {
     clearTimers();
     syncBulkAlerts();
-    if (view === 'process') syncProcessAlerts();
   }
 
   function later(at) {
@@ -1902,54 +794,6 @@
       if (kind === 'lead' && state.settings.leadMin <= 0) return;
       if (now >= at) { maybeFire(bake, kind, at, st); return; }
       later(at);
-    });
-  }
-
-  /* Process alerts. Same mechanism as the bulk's: the fired time is remembered
-   * against the moment it fired for, so a projection that drifts by a few
-   * minutes does not re-alarm, and one that moves materially later does. */
-  function syncProcessAlerts() {
-    var proc = activeProcess();
-    if (!proc) return;
-    var now = Date.now();
-    var tl = projectProcess(proc, now);
-    proc.fired = proc.fired || {};
-    var cur = tl.current;
-    var jobs = [];
-
-    /* The running stage's own timer — the bulk is excluded, the accumulator
-     * already owns that alert. */
-    if (cur && cur.actualStart != null && cur.durationMin > 0 && cur.type !== 'bulk') {
-      if (state.settings.leadMin > 0 && cur.durationMin * MIN > state.settings.leadMin * MIN * 1.5) {
-        jobs.push({ key: cur.id + ':lead', at: cur.end - state.settings.leadMin * MIN, kind: 'lead',
-          title: state.settings.leadMin + ' minutes left on ' + cur.name,
-          body: (cur.detail || cur.notes || '') });
-      }
-      jobs.push({ key: cur.id + ':end', at: cur.end, kind: 'end',
-        title: cur.name + ' — time is up',
-        body: cur.judgement ? 'Check it before you move on. ' + cur.cues.join('; ') : 'On to ' + (tl.next ? tl.next.name.toLowerCase() : 'the next thing') + '.' });
-    }
-
-    /* Every fold rep and every feed gets its own. */
-    tl.events.forEach(function (e) {
-      if (e.actualEnd != null) return;
-      if (e.kind !== 'rep' && e.kind !== 'feed') return;
-      if (e.start < now - 6 * H) return;
-      jobs.push({ key: e.id + ':at', at: e.start, kind: 'end',
-        title: e.name, body: e.detail || e.notes || '' });
-    });
-
-    jobs.forEach(function (j) {
-      if (now >= j.at) {
-        var prev = proc.fired[j.key];
-        if (prev != null && j.at - prev < 15 * MIN) return;
-        proc.fired[j.key] = j.at; save();
-        alarm(j.kind);
-        notify(j.title, j.body);
-        toast(j.title);
-        return;
-      }
-      later(j.at);
     });
   }
 
@@ -2020,8 +864,7 @@
       var act = el.dataset.act;
       if (act === 'crumb') {
         el.addEventListener('change', function () {
-          var b = state.bakes.filter(function (x) { return x.id === el.dataset.id; })[0] ||
-            state.processes.filter(function (x) { return x.id === el.dataset.id; })[0];
+          var b = state.bakes.filter(function (x) { return x.id === el.dataset.id; })[0];
           if (b) { b.crumb = el.value; save(); toast('Crumb note saved.'); }
         });
         return;
@@ -2033,59 +876,6 @@
       form.dataset.bound = '1';
       form.addEventListener('submit', function (e) { e.preventDefault(); startBake(form); });
     }
-    var pform = root.querySelector('#planform');
-    if (pform && !pform.dataset.bound) {
-      pform.dataset.bound = '1';
-      pform.addEventListener('submit', function (e) { e.preventDefault(); computePlan(pform); });
-    }
-    bindDrag(root);
-  }
-
-  /* Drag a plan row sideways to move it; everything after follows. A tap that
-   * never moved opens the exact-time sheet instead — thumbs are imprecise and
-   * this gets used at odd hours. */
-  var PX_PER_MIN = 2.4;
-  function bindDrag(root) {
-    root.querySelectorAll('[data-drag]').forEach(function (el) {
-      if (el.dataset.dbound) return;
-      el.dataset.dbound = '1';
-      var id = el.dataset.drag;
-      var startX = 0, startT = 0, pending = 0, moved = false, active = false;
-      var whenEl = el.querySelector('.when');
-
-      el.addEventListener('pointerdown', function (e) {
-        if (e.target.closest('button')) return;
-        var evt = state.draft && state.draft.events.filter(function (x) { return x.id === id; })[0];
-        if (!evt) return;
-        active = true; moved = false; startX = e.clientX; startT = evt.start; pending = startT;
-        try { el.setPointerCapture(e.pointerId); } catch (err) { /* not capturable, drag still works */ }
-        el.classList.add('dragging');
-      });
-
-      el.addEventListener('pointermove', function (e) {
-        if (!active) return;
-        var dx = e.clientX - startX;
-        if (!moved && Math.abs(dx) < 6) return;
-        moved = true;
-        var mins = Math.round(dx / PX_PER_MIN / 5) * 5;
-        pending = startT + mins * MIN;
-        whenEl.firstChild.nodeValue = clock(pending);
-        el.classList.toggle('shifted', mins !== 0);
-      });
-
-      function finish() {
-        if (!active) return;
-        active = false;
-        el.classList.remove('dragging', 'shifted');
-        if (!moved) return nudgeSheet(id);
-        if (pending === startT) return render();
-        P.nudgeEvent(state.draft, id, pending);
-        save(); render();
-        toast('Moved to ' + clock(pending) + ' — the rest followed.');
-      }
-      el.addEventListener('pointerup', finish);
-      el.addEventListener('pointercancel', finish);
-    });
   }
 
   function dispatch(act, id, el) {
@@ -2101,167 +891,15 @@
         save();
         break;
       case 'history': closeSheet(); view = 'history'; render(); break;
-      case 'home': closeSheet(); view = 'home'; openBakeId = null; render(); break;
+      /* Home and Back are the same destination now: whatever is in front of
+       * you. There is nowhere else for the app to be. */
+      case 'home':
       case 'back':
         closeSheet();
-        view = state.activeProcessId ? 'process' : state.activeId ? 'live' : 'home';
+        view = state.activeId ? 'live' : 'start';
         openBakeId = null; render(); break;
 
-      // ------------------------------------------------------------ modes
-      case 'mode-bulk': view = 'start'; render(); break;
-      case 'mode-plan': view = 'planner'; render(); break;
-      case 'mode-full':
-        if (state.activeProcessId) { view = 'process'; render(); break; }
-        view = 'loaf'; render();
-        break;
-      case 'resume-bulk': view = 'live'; render(); break;
-      case 'resume-process': view = 'process'; render(); break;
-
-      // -------------------------------------------------------- templates
-      case 'templates': closeSheet(); view = 'templates'; render(); break;
-      case 'tpl-edit': editingTemplateId = id; view = 'editor'; render(); break;
-      case 'tpl-meta': templateMetaSheet(id); break;
-      case 'tpl-dupe':
-        var dupe = P.duplicateTemplate(findTemplate(id));
-        state.templates.push(dupe); save();
-        editingTemplateId = dupe.id; view = 'editor'; render();
-        toast('Duplicated — edit away, the original is untouched.');
-        break;
-      case 'tpl-del':
-        confirmSheet('Delete this process?', 'Bakes already run from it keep their own frozen copy, so history is safe.', 'Delete', function () {
-          state.templates = state.templates.filter(function (t) { return t.id !== id; });
-          save(); render(); toast('Deleted.');
-        });
-        break;
-      case 'tpl-new':
-        var fresh = P.normalizeTemplate({ name: 'New process', stages: [P.blankStage('fixed')] });
-        state.templates.push(fresh); save();
-        editingTemplateId = fresh.id; view = 'editor'; render();
-        break;
-      case 'tpl-export': exportTemplate(id); break;
-      case 'tpl-import': importTemplate(); break;
-      case 'tpl-reseed':
-        confirmSheet('Restore the seeded process?', 'Adds a fresh copy of “Bruce’s Loaf” as it ships. Nothing you have edited is touched.', 'Restore', function () {
-          var seed = P.duplicateTemplate(P.defaultTemplate(), "Bruce's Loaf");
-          state.templates.push(seed); save(); render(); toast('Seeded copy added.');
-        });
-        break;
-      case 'st-edit': stageSheet(editingTemplateId, id); break;
-      case 'st-up': moveStage(id, -1); break;
-      case 'st-down': moveStage(id, 1); break;
-      case 'st-add': addStageSheet(); break;
-
-      // --------------------------------------------------------- full bake
-      /* `mode-full` from home resumes a running bake; `loaves` always means
-       * the picker, which is what the Back arrow one screen in has to mean. */
-      case 'loaves': view = 'loaf'; render(); break;
-      case 'loaf-pick':
-        var lastF = lastBulkTemp();
-        var loaf = findTemplate(id);
-        var loafBulk = loaf.stages.filter(function (s) { return s.type === 'bulk'; })[0];
-        /* Seed the temperature from what your kitchen actually did last time,
-         * then the loaf's own target, then a plain warm room. */
-        bakeSetup = {
-          templateId: id, startAt: null, fromFridge: true,
-          bulkTempC: lastF != null ? Math.round(lastF * 2) / 2 : loafBulk ? loafBulk.targetTempC : 22
-        };
-        view = 'ready'; render();
-        break;
-      case 't-ready-fridge':
-        bakeSetup.fromFridge = el.getAttribute('aria-checked') !== 'true';
-        render();
-        break;
-      case 'ready-temp':
-        numberSheet({
-          title: 'Bulk temperature', unit: '°C', value: bakeSetup.bulkTempC,
-          step: 0.5, min: M.TEMP_MIN, max: M.TEMP_MAX,
-          hint: 'How warm the dough will sit during bulk. A guess is fine — the tracker corrects it from real readings once the bulk is running.',
-          onSave: function (v) {
-            if (v < M.TEMP_MIN || v > M.TEMP_MAX) {
-              return err('Between ' + M.TEMP_MIN + ' and ' + M.TEMP_MAX + ' °C.');
-            }
-            bakeSetup.bulkTempC = v; closeSheet(); render();
-          }
-        });
-        break;
-      case 'ready-opt':
-        var startNow = Date.now();
-        var readyPlan = P.planForward(findTemplate(bakeSetup.templateId), {
-          startAt: bakeSetup.startAt != null && bakeSetup.startAt > startNow ? bakeSetup.startAt : startNow,
-          bulkTempC: bakeSetup.bulkTempC, fromFridge: bakeSetup.fromFridge
-        });
-        var opt = readyPlan.options.filter(function (o) { return o.kind === id; })[0];
-        if (!opt) break;
-        bakeSetup.startAt = opt.startAt;
-        render(); toast('Moved to ' + clock(opt.startAt) + '. Nothing to do until then.');
-        break;
-      case 'ready-start':
-        if (state.activeProcessId) {
-          confirmSheet('There is a bake running', 'Starting this one abandons the one in progress.', 'Start anyway', function () {
-            var running = activeProcess();
-            endBulkRecord(running); running.status = 'abandoned'; running.finishedAt = Date.now();
-            startForward();
-          });
-        } else startForward();
-        break;
-
-      // ---------------------------------------------------------- planner
-      case 't-fridge':
-        el.setAttribute('aria-checked', el.getAttribute('aria-checked') !== 'true');
-        break;
-      case 'opt-apply': applyOption(id); break;
-      case 'plan-ics':
-        download(P.toICS(state.draft.events, findTemplate(state.draft.params.templateId).name),
-          slug(findTemplate(state.draft.params.templateId).name) + '-' +
-          new Date(state.draft.params.finishAt).toISOString().slice(0, 10) + '.ics', 'text/calendar');
-        toast('Calendar file exported.');
-        break;
-      case 'plan-start':
-        if (state.activeProcessId) {
-          confirmSheet('There is a bake running', 'Starting this plan abandons the one in progress.', 'Start anyway', function () {
-            var old = activeProcess();
-            endBulkRecord(old); old.status = 'abandoned'; old.finishedAt = Date.now();
-            startPlan();
-          });
-        } else startPlan();
-        break;
-
-      // ---------------------------------------------------------- process
-      case 'proc-menu': processMenuSheet(); break;
-      case 'proc-start': startStage(activeProcess(), id); break;
-      case 'proc-tick': completeStage(activeProcess(), id); break;
-      case 'proc-note': stageNoteSheet(activeProcess(), id); break;
-      case 'tl-toggle': timelineOpen = !timelineOpen; render(); break;
-      case 'proc-finish':
-        closeSheet();
-        confirmSheet('Finish this bake?', 'Anything still unticked stays unticked in history.', 'Finish', function () {
-          finishProcess(activeProcess());
-        });
-        break;
-      case 'proc-ics':
-        var pr = activeProcess();
-        var tlx = projectProcess(pr, Date.now());
-        download(P.toICS(tlx.events.filter(function (e) { return e.actualEnd == null; }), pr.name),
-          slug(pr.name) + '.ics', 'text/calendar');
-        closeSheet(); toast('Calendar file exported.');
-        break;
-      case 'openproc': openBakeId = id; render(); break;
-      case 'delproc':
-        confirmSheet('Delete this bake?', 'The timeline, the stage notes and the bulk readings go with it.', 'Delete', function () {
-          var gone = state.processes.filter(function (x) { return x.id === id; })[0];
-          if (gone && gone.bulkBakeId) state.bakes = state.bakes.filter(function (b) { return b.id !== gone.bulkBakeId; });
-          state.processes = state.processes.filter(function (x) { return x.id !== id; });
-          if (state.activeProcessId === id) state.activeProcessId = null;
-          openBakeId = null; save(); render(); toast('Deleted.');
-        });
-        break;
-      case 'proc-ics-old':
-        var op = state.processes.filter(function (x) { return x.id === id; })[0];
-        download(P.toICS(projectProcess(op, Date.now()).events, op.name), slug(op.name) + '.ics', 'text/calendar');
-        toast('Calendar file exported.');
-        break;
       case 'csv': exportCSV(); break;
-      case 'csv-stages': exportStagesCSV(); break;
       case 'openbake': openBakeId = id; render(); break;
       case 'closebake': openBakeId = null; render(); break;
       case 'delbake':
@@ -2293,7 +931,7 @@
   // ---------------------------------------------------------------- boot
   function tick() {
     var busy = document.getElementById('sheet-root').firstChild;
-    if ((view === 'live' || view === 'process') && !busy) render();
+    if (view === 'live' && !busy) render();
     else syncAlerts();
   }
   setInterval(tick, 15000);
@@ -2320,9 +958,9 @@
     };
   }));
 
-  /* Persist on boot so the seeded template and any v1 migration are durable
-   * even if the first thing you do is close the tab. */
+  /* Persist on boot so the v2 migration is durable even if the first thing you
+   * do is close the tab. */
   save();
-  view = state.activeProcessId ? 'process' : state.activeId ? 'live' : 'home';
+  view = state.activeId ? 'live' : 'start';
   render();
 })();

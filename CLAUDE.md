@@ -1,8 +1,7 @@
 # CLAUDE.md
 
-**TrackMyLoaf** — sourdough process & bulk ferment tracker. A static
-single-page app for running a real bake — used on a phone, in a kitchen, at odd
-hours.
+**TrackMyLoaf** — sourdough bulk ferment tracker. A static single-page app for
+running a real bake — used on a phone, in a kitchen, at odd hours.
 
 ## How this project ships
 
@@ -18,8 +17,8 @@ Consequences worth remembering:
 
 * **A push is a deploy.** Never push speculative or half-finished work to `main`.
   Work on a branch, merge when it is actually done.
-* **The site is exactly five files.** `index.html`, `model.js`, `process.js`,
-  `app.js`, `styles.css`. Adding a new script means adding a `<script>` tag to
+* **The site is exactly four files.** `index.html`, `model.js`, `app.js`,
+  `styles.css`. Adding a new script means adding a `<script>` tag to
   `index.html` — forget it and the app boots into a blank screen.
 * `*.tests.js`, `README.md`, `CLAUDE.md` are in the repo but are not part of the
   site. `node_modules/`, `package.json`, `package-lock.json` are gitignored.
@@ -29,18 +28,17 @@ Consequences worth remembering:
 ## Architecture
 
 Plain ES5-style JavaScript, no framework, no bundler, no dependencies at
-runtime. Two pure modules and one UI file.
+runtime. One pure module and one UI file.
 
 | file | what it is |
 |---|---|
 | `model.js` | Fermentation model. Pure. `window.BFModel` / `require`. |
-| `process.js` | Templates, reverse planner, timeline projection, `.ics`. Pure. `window.BFProcess`. |
 | `app.js` | All UI and all storage. The only file that touches the DOM or `localStorage`. |
 | `styles.css` | The whole design system: tokens, day and night themes, line art. |
 
-The pure modules take `now` as a parameter and own no clocks, no DOM and no
-storage. That is what makes them testable in node and what lets the UI recompute
-everything from stored timestamps after the phone has been asleep.
+`model.js` takes `now` as a parameter and owns no clock, no DOM and no storage.
+That is what makes it testable in node and what lets the UI recompute everything
+from stored timestamps after the phone has been asleep.
 
 The one external dependency is Google Fonts (Outfit, Space Mono, Instrument
 Serif). Every stack has a real fallback — a kitchen with no signal still gets a
@@ -49,7 +47,25 @@ line illustrations are CSS `mask` data-URIs in `styles.css`, so they inherit
 whatever ink colour their card uses and work unchanged in the night theme.
 
 State lives entirely in `localStorage` under the key `bft.v1` (the key kept its
-name through the v2 schema bump). There is no backend and no accounts.
+name through the v2 and v3 schema bumps). There is no backend and no accounts.
+
+## The app is one thing
+
+There are three screens and no mode picker:
+
+* `view = 'start'` — the form that begins a bulk. Where you land with nothing
+  running.
+* `view = 'live'` — the running bulk. Where you land if there is one.
+* `view = 'history'` — finished bakes, their charts and the CSV export.
+
+**v3 removed recipe templates, the stage-by-stage full bake, and the forward and
+reverse planners**, along with `process.js` and `process.tests.js`. That was a
+deliberate simplification, not an accident — do not reintroduce a recipe store,
+a stage runner or a second chart because a stray reference to one survives
+somewhere. The removed code is in the git history if it is ever wanted back.
+`load()` drops the old `templates`, `processes`, `activeProcessId` and `draft`
+keys on read; the bulk ferments a v2 install had are ordinary bakes and survive
+untouched.
 
 ## Invariants — do not break these
 
@@ -60,121 +76,67 @@ name through the v2 schema bump). There is no backend and no accounts.
 2. **Nothing is derived from a running timer.** Every number on screen is
    recomputed from stored timestamps plus `Date.now()`. A backgrounded tab, a
    slept phone or a reload must change nothing. `ui.tests.js` asserts this with
-   a real page reload.
+   a real page reload and with a `Date.now` it pushes hours forward.
 3. **Edits never patch state — they replay it.** `BFModel.replay()` recomputes
    from the first reading every time. Calibration is causal: a factor learned at
    reading *k* only affects intervals after *k*.
-4. **The bulk stage of a full bake reuses the tracker, it does not reimplement
-   it.** Starting the bulk creates a real bake record in `state.bakes` and sets
-   `state.activeId`, so `logTemp`, `logRise`, the unattended-gap question,
-   calibration, reading edits and the preshape alarm are the existing functions
-   on the existing data. If you find yourself writing a second chart or a second
-   temperature log, stop.
-5. **Judgement stages never auto-complete.** Bulk, cold proof and any stage with
-   a cue checklist wait for an explicit tap. The app can say *ready*; it cannot
-   say *done*. This is a product rule, not an implementation detail.
-6. **The reverse planner does not silently produce a plan that has you shaping
-   at 3am.** If the cold proof cannot absorb it, say so and offer costed
-   alternatives.
-7. **Entrance animations are gated behind `#app.enter`.** The live views
-   re-render once a second from stored timestamps (invariant 2), so any
+4. **The bulk never auto-completes.** It waits for an explicit tap. The app can
+   say *ready*; it cannot say *done*. This is a product rule, not an
+   implementation detail.
+5. **Entrance animations are gated behind `#app.enter`.** The live view
+   re-renders once a second from stored timestamps (invariant 2), so any
    unguarded entrance animation restarts every second — the hero would pulse,
    the chart would redraw itself, the progress bar would sweep from zero.
    `render()` adds `enter` only when the view actually changes. Anything that
    animates on arrival goes under that selector.
-8. **Cue lists are instructions, not a checklist.** Small print you read before
-   you decide. Nothing to tick — the tap that ends a stage is the primary
+6. **Cue lists are instructions, not a checklist.** Small print you read before
+   you decide. Nothing to tick — the tap that ends the bulk is the primary
    button, and there is only ever one of those.
 
-## The three modes
+## Numbers the user types
 
-Picked from the home screen; a bake already in progress resumes straight from
-there.
+Every one of them goes through `parseNum()`, which accepts a comma or a full
+stop as the decimal separator — phone keyboards in most of Europe offer a comma,
+and `parseFloat('23,5')` is 23, which is a wrong dough temperature rather than a
+rejected one.
 
-* **Bulk ferment only** — the original tool, unchanged. `view = 'live'`.
-* **Full bake** — recipe-first. Pick a loaf (`view = 'loaf'`), confirm the two
-  things the schedule cannot know — is the starter cold, how warm is the
-  kitchen (`view = 'ready'`) — then run it stage by stage (`view = 'process'`).
-  The schedule is planned **forwards from now**.
-* **Plan backwards** — finish time in, schedule out. `view = 'planner'`.
+**No numeric field is a `type="number"`.** Such a field silently discards a
+comma before JS ever sees it, so temperatures and rise percentages are
+`type="text" inputmode="decimal"` and validated in JS. Range checks live in
+`M.validateReading()` and the call sites, not in `min`/`max` attributes.
 
-Full bake and Plan backwards are two doors to the same tracker, and they must
-not become the same screen. One starts from *what*, the other from *when*. If
-picking a loaf ever lands you on a datetime field again, that is the bug.
+The keypad in `numberSheet()` writes a `.`, and a comma typed on the device's own
+keyboard is rewritten to `.` on `input`, so the big field always shows what will
+be saved.
 
-## Templates
+## The phone, not the browser
 
-An ordered list of stages, duplicable, JSON import/export, seeded with **Bruce's
-Loaf**. Every number in the seed is a starting point, not a spec — all editable.
+This is read one-handed on a phone. Two things in `styles.css` exist only for
+that and must not be dropped:
 
-Stage types: `fixed`, `active`, `repeat`, `bulk`, `cold-proof`, `bake`,
-`starter-feed`.
+* `touch-action: manipulation` on everything tappable. Two quick taps on the
+  keypad — how you type 44 — otherwise register as double-tap-to-zoom and leave
+  the whole app at 2× mid-reading. It also removes the 300 ms tap delay.
+* **No field under 16px.** Safari zooms the page to reach anything smaller, and
+  never zooms back out. `input, textarea, select { font-size: max(16px, 1em) }`
+  is the floor; a later, more specific rule can still undercut it, so check.
 
-* A `repeat` can run **during** another stage (`duringStageId`) — coil folds
-  inside the bulk window, with their own alerts and their own tick-offs.
-* `cold-proof` is a **range**, not a duration. It is the schedule's shock
-  absorber and the only thing the planner is allowed to stretch or squeeze.
-* Inter-stage references (`duringStageId`, `peakAtStageId`) are **by id**, so
-  reordering is safe. `normalizeTemplate()` drops dangling references after a
-  delete — always route edits through it.
-
-## Reverse planner
-
-Walks the template backwards from the finish time. Bake subtracts its steps and
-schedules preheat ahead of it; cold proof starts at its range midpoint; bulk
-subtracts `1 / r(T)`; the final starter feed is placed so peak lands when the
-dough needs it, with revival feeds chaining back before that.
-
-Then the unsociable-hours pass: anything hands-on between **23:00 and 06:00**
-triggers a scan of the whole cold-proof range on a 15-minute grid for the
-smallest flex that clears the night. If nothing does, it reports the problem and
-prices the escapes — cooler bulk, warmer bulk, different bake time — each
-offered only if it actually works. A night-time starter feed moves back to the
-previous 21:00 and reports the time-to-peak that move now demands. Steps pinned
-by the finish time itself (preheat, the bake) are flagged, not silently planned.
-
-## Forward planner
-
-`planForward()` is the same walk seen from the other end: the first thing you
-have to do lands on `startAt` and the finish falls out of it. It does not walk
-the stages a second time — every offset in a pass is fixed once `bulkTempC` and
-`coldMin` are, so the plan is linear in `finishAt`. One probe pass measures the
-lead time, a second run lands it on the start. Same events, same arithmetic.
-
-The pinning is mirrored too. Backwards, the finish time nails everything from
-the fridge onwards; forwards, the start time nails everything up to it and the
-bake is what floats — so the steps the cold proof can still rescue are exactly
-the ones a pass marks *unmovable*. What it cannot fix it reports, and the one
-knob genuinely free here is when you start: it scans later starts on a
-half-hour grid and offers the smallest one that clears the night.
-
-## Reconciliation
-
-`BFProcess.projectTimeline()` rebuilds every time from two facts per stage:
-`actualStart` and `actualEnd`. Real elapsed time always overrides the plan and
-everything downstream shifts with it. Satellites (folds, bake sub-steps,
-preheat) follow their anchor's live start. Once the bulk has readings, its end
-comes from the accumulator's `predictedEnd` rather than the plan's estimate, and
-the timeline says so on screen.
+The viewport meta deliberately does *not* set `maximum-scale` or
+`user-scalable=no`: modern Safari ignores both, and on Android they would break
+legitimate pinch-zoom. `touch-action` is the fix.
 
 ## Tests
 
-    node tests.js           # fermentation model — 56 assertions
-    node process.tests.js   # templates, both planners, reconciliation, .ics — 76
-    node ui.tests.js        # real DOM driven by clicks — 128 (needs: npm i jsdom)
+    node tests.js       # fermentation model — 56 assertions
+    node ui.tests.js    # real DOM driven by clicks — 69 (needs: npm i jsdom)
 
-Run all three before pushing, since a push deploys.
-
-`process.tests.js` prints both worked examples — backwards from out of the oven
-Friday 09:45, and forwards from Tuesday 09:00 — as day-grouped timelines
-**before** asserting on them, so the arithmetic is readable rather than merely
-green. It also prints the escape the forward planner offers, in words. Keep
-that habit: when the planner changes, read the printed timeline, do not just
-trust the pass count.
+Run both before pushing, since a push deploys.
 
 `ui.tests.js` clicks real buttons and reads real `localStorage`, including a
-full page reload in a second JSDOM. jsdom is the only dev dependency and is
-gitignored.
+full page reload in a second JSDOM. Its `boot()` installs an advanceable
+`Date.now`, so `advance(3)` is three hours of dough at no cost — and it is also
+the honest test of invariant 2, since nothing but the clock moves. jsdom is the
+only dev dependency and is gitignored.
 
 ### jsdom gotcha
 
