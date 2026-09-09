@@ -15,6 +15,10 @@ Static, no build step. Drag this folder into Cloudflare Pages (or serve it
 anywhere). Dev files are not part of the site — that is:
 
     index.html   model.js   app.js   styles.css
+    sw.js   manifest.webmanifest   icon-*.png
+
+Adding a file to the site means listing it in **both** `index.html` and the
+`SHELL` array in `sw.js`, or it will be missing offline.
 
 All state lives in `localStorage` on the device. No backend, no accounts.
 
@@ -41,6 +45,27 @@ what is already there.
 
 On iOS, Safari also wipes site storage after 7 days of not visiting. Adding the
 app to the Home Screen exempts it from that.
+
+## Install it
+
+It is a real installable app: `manifest.webmanifest` and `sw.js`.
+
+* **iPhone** — open it in Safari, Share → Add to Home Screen. Safari never
+  offers this itself, so the app describes the taps under Backup and restore.
+* **Android** — Chrome offers an install prompt; there is also an Install
+  button in the same place.
+
+Installing is not cosmetic. It exempts the app from the 7-day storage wipe
+above, it opens without browser chrome, and it is the prerequisite for iOS
+notifications if they are ever added.
+
+**Offline works properly.** The whole site is precached, so a bulk can be
+tracked with the phone in aeroplane mode — verified by killing the server
+outright and reloading. The one thing allowed to fail is Google Fonts; every
+stack has a real fallback.
+
+The worker is **network-first**, so a deploy reaches an already-installed phone
+without a hard refresh — the cache is a fallback, never the first answer.
 
 Alerts are scheduled in the page, so the tab has to stay open overnight — that
 is what the screen wake lock toggle is for. Everything on screen is recomputed

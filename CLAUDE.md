@@ -28,13 +28,23 @@ Consequences worth remembering:
 
 * **A push is a deploy.** Never push speculative or half-finished work to `main`.
   Work on a branch, merge when it is actually done.
-* **The site is exactly four files.** `index.html`, `model.js`, `app.js`,
-  `styles.css`. Adding a new script means adding a `<script>` tag to
-  `index.html` — forget it and the app boots into a blank screen.
+* **The site is these files**, and adding one means updating *two* other places:
+
+      index.html  model.js  app.js  styles.css
+      sw.js  manifest.webmanifest  icon-{180,192,512}.png  icon-maskable-512.png
+
+  A new script needs a `<script>` tag in `index.html` — forget it and the app
+  boots into a blank screen — **and** an entry in `SHELL` in `sw.js`, or it
+  will not be there offline. `ui.tests.js` asserts the second one for every
+  local path `index.html` references, because the first is easy to remember
+  and the second is not.
 * `*.tests.js`, `README.md`, `CLAUDE.md` are in the repo but are not part of the
   site. `node_modules/`, `package.json`, `package-lock.json` are gitignored.
-* After a deploy, a phone with the old `index.html` cached will not pull a newly
-  added script. Hard-refresh when the file list changes.
+* The service worker is **network-first**, so a deploy reaches an
+  already-installed phone without a hard refresh. Verified in a real browser:
+  change a file, reload, the change is live with no version bump. Do not invert
+  this to cache-first for speed — a fast stale answer about a bake is worse
+  than a slow correct one.
 
 ## Architecture
 
@@ -154,6 +164,25 @@ The keypad in `numberSheet()` writes a `.`, and a comma typed on the device's ow
 keyboard is rewritten to `.` on `input`, so the big field always shows what will
 be saved.
 
+## Installed, not just visited
+
+`manifest.webmanifest` + `sw.js` make this a real installable app. That is not
+decoration — **on iOS, Safari wipes the storage of a site you have not opened
+for seven days, and a Home Screen install is exempt.** Installation is therefore
+part of the data-durability story above, which is why `storageSheet()` is where
+the app raises it: iOS gets the taps described (Safari never fires
+`beforeinstallprompt`), Chrome gets a real Install button from the captured
+event, and an already-installed app gets told it is safe.
+
+`sw.js` carries its own retirement instructions in a comment at the top — a
+tombstone worker that unregisters itself. Browsers always revalidate `sw.js`,
+so that is the escape hatch if the worker ever needs to go.
+
+Offline is genuine and tested in a real browser: kill the server outright,
+reload, and the app still renders, still lands on the running bulk, and still
+logs a temperature that persists. Google Fonts is the one thing allowed to
+fail — every stack in `styles.css` has a real fallback.
+
 ## The phone, not the browser
 
 This is read one-handed on a phone. Two things in `styles.css` exist only for
@@ -173,7 +202,7 @@ legitimate pinch-zoom. `touch-action` is the fix.
 ## Tests
 
     node tests.js       # fermentation model — 56 assertions
-    node ui.tests.js    # real DOM driven by clicks — 85 (needs: npm i jsdom)
+    node ui.tests.js    # real DOM driven by clicks — 102 (needs: npm i jsdom)
 
 Run both before pushing, since a push deploys.
 

@@ -386,6 +386,72 @@ var file = new w9.File([JSON.stringify({ app: 'trackmyloaf', version: 3, state: 
 Object.defineProperty(captured, 'files', { value: [file] });
 captured.dispatchEvent(new w9.Event('change'));
 
+head('INSTALLABLE, AND OFFLINE BY DESIGN');
+var html = fs.readFileSync(path.join(DIR, 'index.html'), 'utf8');
+var manifest = JSON.parse(fs.readFileSync(path.join(DIR, 'manifest.webmanifest'), 'utf8'));
+var swSrc = fs.readFileSync(path.join(DIR, 'sw.js'), 'utf8');
+
+ok('the page links a manifest', /<link rel="manifest" href="manifest\.webmanifest">/.test(html));
+ok('and an apple-touch-icon, which is the one iOS actually reads',
+  /<link rel="apple-touch-icon" href="icon-180\.png">/.test(html));
+ok('the service worker is registered after load, never blocking boot',
+  /addEventListener\('load'[\s\S]*serviceWorker\.register\('sw\.js'\)/.test(html));
+ok('and a failed registration cannot break the app', /register\('sw\.js'\)\.catch\(/.test(html));
+
+ok('the manifest has what a browser needs to offer an install',
+  manifest.name && manifest.short_name && manifest.start_url &&
+  manifest.display === 'standalone' && manifest.icons.length >= 2);
+ok('including both icon sizes Chrome requires',
+  ['192x192', '512x512'].every(function (s) {
+    return manifest.icons.some(function (i) { return i.sizes === s; });
+  }));
+ok('and a maskable icon, so Android does not crop the loaf',
+  manifest.icons.some(function (i) { return i.purpose === 'maskable'; }));
+ok('every icon the manifest names actually exists',
+  manifest.icons.every(function (i) { return fs.existsSync(path.join(DIR, i.src)); }),
+  manifest.icons.map(function (i) { return i.src; }).join(' '));
+ok('the manifest theme matches the light-theme page background',
+  manifest.background_color === '#F7F1E8' && manifest.theme_color === '#F7F1E8');
+
+/* The same trap CLAUDE.md flags for <script> tags: add a file to the site and
+ * forget the other place that lists it, and the app breaks — here, offline. */
+var referenced = [];
+html.replace(/(?:src|href)="([^"]+)"/g, function (m, u) {
+  if (!/^(https?:|data:|#)/.test(u)) referenced.push(u);
+  return m;
+});
+var missing = referenced.filter(function (u) {
+  return u !== 'sw.js' && swSrc.indexOf("'" + u + "'") < 0;
+});
+ok('the worker precaches every local file index.html references',
+  missing.length === 0, 'not precached: ' + missing.join(' '));
+ok('every precached path exists on disk',
+  (/var SHELL = \[([\s\S]*?)\];/.exec(swSrc)[1].match(/'([^']+)'/g) || [])
+    .map(function (s) { return s.slice(1, -1); })
+    .filter(function (p) { return p !== './'; })
+    .every(function (p) { return fs.existsSync(path.join(DIR, p)); }));
+
+/* Network-first is the whole reason a push can stay a deploy. Verified for
+ * real in Chromium; asserted here so it cannot be quietly inverted. */
+ok('the worker goes to the network first and falls back to the cache',
+  /fromNetwork\(request\)\['catch'\]\(function \(\) \{[\s\S]*caches\.match/.test(swSrc));
+ok('a new worker takes over straight away rather than waiting for tabs to close',
+  /skipWaiting\(\)/.test(swSrc) && /clients\.claim\(\)/.test(swSrc));
+ok('and old caches are dropped on activate', /caches\['delete'\]\(k\)/.test(swSrc));
+
+head('THE HOME SCREEN IS THE FIX FOR iOS EVICTION, SO THE APP SAYS SO');
+var wA = boot(JSON.stringify(goodState('Eviction bake')), 0);
+var dA = wA.document;
+Object.defineProperty(wA.navigator, 'userAgent',
+  { value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15', configurable: true });
+var sheetA = openStorage(wA, dA);
+ok('the storage sheet explains the seven-day wipe',
+  /seven days/.test(sheetA.textContent), JSON.stringify(sheetA.textContent.slice(-260)));
+ok('and tells you the taps that fix it',
+  /Add to Home Screen/.test(sheetA.textContent));
+ok('it does not offer a button iOS will never honour',
+  !sheetA.querySelector('[data-act="install"]'));
+
 function finish() {
   head('SUMMARY');
   console.log((fail ? '  FAILED ' + fail + ' / ' + (pass + fail) + '\n   · ' + failures.join('\n   · ')

@@ -8,7 +8,12 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="TrackMyLoaf">
+  <meta name="description" content="Predicts preshape time from hand-entered dough temperatures.">
   <title>TrackMyLoaf — sourdough bulk ferment tracker</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <!-- iOS ignores the manifest's icons and reads this one instead. -->
+  <link rel="apple-touch-icon" href="icon-180.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;500;600;700&amp;family=Space+Mono:wght@400;700&amp;family=Instrument+Serif&amp;display=swap" rel="stylesheet">
@@ -21,5 +26,17 @@
   <div id="toast" role="status" aria-live="assertive"></div>
   <script src="model.js"></script>
   <script src="app.js"></script>
+  <script>
+    /* Registered after load so a worker problem can never delay or block the
+     * app starting, and swallowed entirely on failure: offline support is a
+     * bonus, and the tracker has to run without it. */
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function (e) {
+          console.warn('Offline support unavailable.', e);
+        });
+      });
+    }
+  </script>
 </body>
 </html>

@@ -943,6 +943,39 @@
     input.click();
   }
 
+  /* Installed to the Home Screen, iOS stops wiping this app's storage after
+   * seven idle days — which is the single most useful thing anyone can do
+   * about losing a bake, so it is said where the storage conversation is
+   * rather than in a banner nobody asked for. */
+  function isInstalled() {
+    try {
+      return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+        navigator.standalone === true;
+    } catch (e) { return false; }
+  }
+  function isIOS() {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+  /* Chrome hands over a prompt to fire later; Safari never will, so there the
+   * only honest thing is to describe the taps. */
+  var installPrompt = null;
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();
+    installPrompt = e;
+  });
+  window.addEventListener('appinstalled', function () { installPrompt = null; });
+
+  function installBlock() {
+    if (isInstalled()) return '<p class="note">Running from the Home Screen — this browser keeps your bakes indefinitely.</p>';
+    return '<div class="section-title">Keep it on the Home Screen</div>' +
+      '<p class="hint">' + (isIOS()
+        ? 'Safari clears the storage of sites you have not opened for seven days, and that takes your bakes with it. ' +
+          'Added to the Home Screen it is exempt, and it opens without the browser bars. Share → Add to Home Screen.'
+        : 'It opens faster, works with no signal, and the browser stops treating your bakes as disposable.') + '</p>' +
+      (installPrompt ? '<div class="spacer"></div><button class="btn" data-act="install">Install on this phone</button>' : '');
+  }
+
   /* What the app can actually promise about your data, in plain words. */
   function storageSheet() {
     var n = state.bakes.length;
@@ -962,13 +995,19 @@
       '<div class="spacer"></div>' +
       '<button class="btn ghost" data-act="backup-import">Restore from a backup</button>' +
       '<div class="spacer"></div>' +
-      '<p class="note">Restoring merges — it adds what is missing and never deletes what is here.</p>',
+      '<p class="note">Restoring merges — it adds what is missing and never deletes what is here.</p>' +
+      installBlock(),
       function (sheet) {
         sheet.addEventListener('click', function (e) {
           var a = e.target.closest('[data-act]');
           if (!a) return;
           if (a.dataset.act === 'backup-export') exportBackup();
           if (a.dataset.act === 'backup-import') importBackup();
+          if (a.dataset.act === 'install' && installPrompt) {
+            installPrompt.prompt();
+            installPrompt = null;
+            closeSheet();
+          }
         });
       });
   }
