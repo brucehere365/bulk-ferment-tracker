@@ -79,17 +79,8 @@ html.night {
  * One weight, no fills, ink inherited from whatever card it sits on — so a
  * single path set works on butter, sage, terracotta and the night ground. */
 :root {
-  --ill-loaf: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 63c0-19 18-33 40-33s40 14 40 33c0 7-5 11-13 11H23c-8 0-13-4-13-11Z'/%3E%3Cpath d='M30 47l9 13M46 42l10 15M62 45l9 13M16 74h68'/%3E%3C/svg%3E");
   --ill-banneton: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cellipse cx='50' cy='36' rx='34' ry='9'/%3E%3Cpath d='M16 36l7 33a12 12 0 0 0 12 9h30a12 12 0 0 0 12-9l7-33'/%3E%3Cellipse cx='50' cy='36' rx='23' ry='6'/%3E%3Cellipse cx='50' cy='36' rx='12' ry='3'/%3E%3C/svg%3E");
-  --ill-oven: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 42h64v24a14 14 0 0 1-14 14H32a14 14 0 0 1-14-14V42Z'/%3E%3Cpath d='M10 42h80'/%3E%3Cpath d='M26 42c0-11 11-18 24-18s24 7 24 18'/%3E%3Cpath d='M46 24a4 4 0 0 1 8 0'/%3E%3Cpath d='M18 54h-7M82 54h7'/%3E%3C/svg%3E");
-  --ill-jar: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M32 30h36v46a8 8 0 0 1-8 8H40a8 8 0 0 1-8-8V30Z'/%3E%3Cpath d='M30 22h40v8H30z'/%3E%3Cpath d='M32 55h36M32 61h36'/%3E%3Ccircle cx='44' cy='70' r='3'/%3E%3Ccircle cx='56' cy='74' r='2.2'/%3E%3Ccircle cx='51' cy='66' r='1.6'/%3E%3C/svg%3E");
   --ill-levain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 48h68'/%3E%3Cpath d='M16 48a34 34 0 0 0 68 0'/%3E%3Ccircle cx='36' cy='41' r='5'/%3E%3Ccircle cx='52' cy='43' r='7'/%3E%3Ccircle cx='66' cy='40' r='3.4'/%3E%3Cpath d='M26 43c2-3 5-3 7 0'/%3E%3C/svg%3E");
-  --ill-wheat: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M50 86V30'/%3E%3Cpath d='M50 44c-9-3-13-10-12-17 7 0 11 7 12 17Z'/%3E%3Cpath d='M50 44c9-3 13-10 12-17-7 0-11 7-12 17Z'/%3E%3Cpath d='M50 60c-9-3-13-10-12-17 7 0 11 7 12 17Z'/%3E%3Cpath d='M50 60c9-3 13-10 12-17-7 0-11 7-12 17Z'/%3E%3Cpath d='M50 76c-9-3-13-10-12-17 7 0 11 7 12 17Z'/%3E%3Cpath d='M50 76c9-3 13-10 12-17-7 0-11 7-12 17Z'/%3E%3C/svg%3E");
-  --ill-probe: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 72c6-23 21-35 38-35s32 12 38 35'/%3E%3Cpath d='M8 72h84'/%3E%3Cpath d='M63 24L44 54'/%3E%3Ccircle cx='67' cy='18' r='8'/%3E%3Cpath d='M67 14v4l3 2'/%3E%3C/svg%3E");
-  --ill-hands: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='50' cy='58' r='18'/%3E%3Cpath d='M16 64c4-11 13-18 22-18l6 6'/%3E%3Cpath d='M84 64c-4-11-13-18-22-18l-6 6'/%3E%3Cpath d='M23 55l5 4M30 48l5 5M77 55l-5 4M70 48l-5 5'/%3E%3C/svg%3E");
-  --ill-slice: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M26 40c0-10 11-17 24-17s24 7 24 17v34a6 6 0 0 1-6 6H32a6 6 0 0 1-6-6V40Z'/%3E%3Ccircle cx='42' cy='52' r='4'/%3E%3Ccircle cx='59' cy='60' r='5.5'/%3E%3Ccircle cx='45' cy='69' r='3'/%3E%3C/svg%3E");
-  --ill-moon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='%23000' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M62 20a30 30 0 1 0 0 60 34 34 0 0 1 0-60Z'/%3E%3Cpath d='M80 30l3 6 6 3-6 3-3 6-3-6-6-3 6-3z'/%3E%3C/svg%3E");
-  --ill-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round'%3E%3Cpath d='M8 16 16 8M16 8h-7M16 8v7'/%3E%3C/svg%3E");
 }
 
 /* ================================================================= base */
@@ -119,8 +110,26 @@ p { margin: 0 0 10px; }
 button { font: inherit; color: inherit; background: none; border: 0; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* Two taps in quick succession on the same button is how you type 44 on the
+ * keypad. Safari reads it as double-tap-to-zoom and leaves the whole app at
+ * 2×, mid-reading. `manipulation` drops the 300ms double-tap gesture on
+ * anything you are meant to press, which also kills the tap delay. */
+button, .switch, [data-act], [data-key], label.field, input, textarea, select {
+  touch-action: manipulation;
+}
+/* A double-tap that lands between two keys selects the text under it instead,
+ * which looks just as broken. Controls are for pressing, not for selecting —
+ * the fields you actually type into are left alone. */
+button, .switch, [data-key], .navpill, .keypad {
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Safari zooms the page to reach any field whose text is under 16px. Every
+ * input here is at least that, and this is the floor that keeps it true. */
+input, textarea, select { font-size: max(16px, 1em); }
+
 /* Numbers are the content. */
-.hero .time, .stat .v, .planrow .when, .reading .when, .tlrow .when, #numval {
+.hero .time, .stat .v, .reading .when, #numval {
   font-variant-numeric: tabular-nums;
 }
 
@@ -180,14 +189,10 @@ button { font: inherit; color: inherit; background: none; border: 0; }
   mask: var(--ill-levain) no-repeat center / contain;
   pointer-events: none;
 }
-/* The hero on the way into a bake carries two lines of prose where the others
- * carry one big number, so the line art moves out of the text's way. */
+/* The hero on the way into a bake carries two lines of prose where the running
+ * one carries a big number, so the line art moves out of the text's way. */
 .hero.setup .remain { max-width: 82%; }
 .hero.setup::after { right: -34px; bottom: -32px; opacity: .14; }
-
-/* The stage you are actually in, inside a full bake. */
-.hero.now { background-color: var(--peri); color: var(--peri-ink); }
-.hero.now::after { -webkit-mask-image: var(--ill-hands); mask-image: var(--ill-hands); opacity: .34; }
 
 /* Arrival, not alarm. */
 .hero.ready {
@@ -319,130 +324,11 @@ html.night .navpill { background: var(--surface-2); border: 1px solid var(--line
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Cpath d='M12 8v4l3 2'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Cpath d='M12 8v4l3 2'/%3E%3C/svg%3E");
 }
-.navpill .n-menu i {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='M5 6h14M5 12h14M5 18h9'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='M5 6h14M5 12h14M5 18h9'/%3E%3C/svg%3E");
-}
-
-/* ============================================================ home cards */
-.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.mode {
-  position: relative; overflow: hidden; text-align: left;
-  display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start;
-  border-radius: var(--r-card); padding: 20px 22px 22px; width: 100%;
-  background: var(--surface-2); color: var(--ink);
-  transition: transform .16s var(--ease);
-}
-.mode:active { transform: scale(.985); }
-.modes .mode:nth-child(1) { grid-column: 1 / -1; min-height: 172px; background: var(--peri); color: var(--peri-ink); }
-/* The copy sits high on the two small cards so it never crowds the line art
- * anchored to the bottom corner. */
-.modes .mode:nth-child(2),
-.modes .mode:nth-child(3) { min-height: 186px; }
-.modes .mode:nth-child(2) { background: var(--butter); color: var(--butter-ink); }
-.modes .mode:nth-child(3) { background: var(--sage); color: var(--sage-ink); }
-.mode b { display: block; font: 600 19px/1.15 var(--sans); max-width: 160px; }
-.modes .mode:nth-child(n+2) b { font-size: 17px; }
-.mode em {
-  display: block; font: 300 13px/1.4 var(--sans); font-style: normal;
-  opacity: .72; margin-top: 8px; max-width: 170px;
-}
-/* corner arrow */
-.mode::before {
-  content: ''; position: absolute; right: 16px; bottom: 16px;
-  width: 44px; height: 44px; border-radius: 22px;
-  background: rgba(34, 30, 27, .12);
-}
-html.night .mode::before { background: rgba(232, 223, 213, .12); }
-.mode::after {
-  content: ''; position: absolute; background: currentColor; pointer-events: none;
-  -webkit-mask: no-repeat center / contain; mask: no-repeat center / contain;
-}
-.modes .mode:nth-child(1)::after {
-  right: 16px; top: 16px; width: 108px; height: 108px; opacity: .55;
-  -webkit-mask-image: var(--ill-loaf); mask-image: var(--ill-loaf);
-}
-.modes .mode:nth-child(2)::after {
-  left: 14px; bottom: 10px; width: 64px; height: 64px; opacity: .45;
-  -webkit-mask-image: var(--ill-oven); mask-image: var(--ill-oven);
-}
-.modes .mode:nth-child(3)::after {
-  left: 14px; bottom: 10px; width: 64px; height: 64px; opacity: .45;
-  -webkit-mask-image: var(--ill-jar); mask-image: var(--ill-jar);
-}
-/* the arrow glyph, drawn over the disc */
-.mode b::after {
-  content: ''; position: absolute; right: 29px; bottom: 29px;
-  width: 18px; height: 18px; background: currentColor; z-index: 1;
-  -webkit-mask: var(--ill-arrow) no-repeat center / contain;
-  mask: var(--ill-arrow) no-repeat center / contain;
-}
-
-/* ========================================================== loaf picker */
-/* Picking what you are baking. Uniform cards on purpose: colour means
- * something everywhere else in here, and "the first template" is not a
- * meaning. The loaf line art marks the card as a recipe, nothing more. */
-.loaves { display: flex; flex-direction: column; gap: 12px; }
-.loaf {
-  position: relative; overflow: hidden; display: block; width: 100%; text-align: left;
-  background: var(--surface); border: 1px solid var(--line-soft);
-  border-radius: var(--r-card); padding: 22px 84px 20px 22px; min-height: 116px;
-  color: var(--ink); transition: transform .16s var(--ease), border-color .16s;
-}
-.loaf:active { transform: scale(.985); border-color: var(--accent); }
-.loaf b { display: block; font: 500 21px/1.2 var(--sans); letter-spacing: -.02em; }
-.loaf em {
-  display: block; font-style: normal; font: 300 13.5px/1.45 var(--sans);
-  color: var(--muted); margin-top: 7px;
-}
-.loaf .meta {
-  display: block; font: 400 10.5px/1.5 var(--mono);
-  letter-spacing: .08em; text-transform: uppercase; color: var(--muted-2); margin-top: 12px;
-  padding-right: 24px;                    /* clear of the corner arrow */
-}
-.loaf::after {
-  content: ''; position: absolute; right: 14px; top: 20px;
-  width: 58px; height: 58px; background: currentColor; opacity: .18;
-  -webkit-mask: var(--ill-loaf) no-repeat center / contain;
-  mask: var(--ill-loaf) no-repeat center / contain;
-  pointer-events: none;
-}
-.loaf b::after {
-  content: ''; position: absolute; right: 30px; bottom: 22px;
-  width: 16px; height: 16px; background: var(--muted-2);
-  -webkit-mask: var(--ill-arrow) no-repeat center / contain;
-  mask: var(--ill-arrow) no-repeat center / contain;
-}
-
-.resume {
-  position: relative; overflow: hidden; display: block; width: 100%; text-align: left;
-  background: var(--blue); color: var(--blue-ink);
-  border-radius: var(--r-card); padding: 20px 22px 22px; margin-bottom: 18px;
-  min-height: 112px; transition: transform .16s var(--ease);
-}
-.resume:active { transform: scale(.985); }
-.resume .tag {
-  display: block; font: 700 10px/1 var(--mono);
-  letter-spacing: .14em; text-transform: uppercase; opacity: .7;
-}
-.resume b { display: block; font: 600 22px/1.2 var(--sans); letter-spacing: -.02em; margin-top: 12px; }
-.resume em { display: block; font-style: normal; font: 400 13.5px/1.4 var(--sans); opacity: .75; margin-top: 4px; max-width: 240px; }
-.resume::after {
-  content: ''; position: absolute; right: 74px; bottom: -14px;
-  width: 106px; height: 106px; background: currentColor; opacity: .42;
-  -webkit-mask: var(--ill-probe) no-repeat center / contain;
-  mask: var(--ill-probe) no-repeat center / contain;
-}
 
 /* ======================================================== section titles */
 .section-title {
   font: 700 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
   color: var(--muted); margin: 26px 0 12px;
-}
-.section-title .linkbtn { float: right; }
-.linkbtn {
-  font: 700 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
-  color: var(--accent); padding: 4px 2px; margin-left: 6px;
 }
 
 /* ============================================================= readings */
@@ -473,24 +359,23 @@ html.night .mode::before { background: rgba(232, 223, 213, .12); }
 /* ============================================================= dough cues
  * Instructions, not a checklist — the app never asks you to tick these,
  * it just wants them in front of you when you decide. */
-.cues, .cuebox {
+.cues {
   background: var(--surface); border-radius: 24px;
   padding: 18px 20px; margin: 16px 0 18px; color: var(--muted);
 }
-.cues .lede, .cuebox .lede {
+.cues .lede {
   font: 700 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
   color: var(--muted); margin-bottom: 10px;
 }
-.cues ul, .cuebox ul { margin: 0; padding: 0; list-style: none; }
-.cues li, .cuebox li {
+.cues ul { margin: 0; padding: 0; list-style: none; }
+.cues li {
   font: 300 13px/1.6 var(--sans); color: var(--muted);
   padding-left: 14px; position: relative;
 }
-.cues li::before, .cuebox li::before {
+.cues li::before {
   content: ''; position: absolute; left: 0; top: 9px;
   width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .5;
 }
-.cuebox .note { margin-top: 10px; font-size: 12px; }
 
 /* ================================================================ sheets */
 .backdrop {
@@ -543,7 +428,8 @@ label.field input, label.field textarea, label.field select {
   border: 1px solid var(--line-soft); border-radius: var(--r-row);
   font: 400 17px/1.3 var(--sans); min-height: 66px;
 }
-label.field textarea { min-height: 92px; resize: vertical; font-size: 15px; }
+/* 16px, not 15: below that Safari zooms the page to focus the field. */
+label.field textarea { min-height: 92px; resize: vertical; font-size: 16px; }
 .choices { display: grid; gap: 10px; margin: 12px 0 4px; }
 .choices.three { grid-template-columns: repeat(3, 1fr); }
 .btn[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
@@ -583,170 +469,15 @@ label.field textarea { min-height: 92px; resize: vertical; font-size: 15px; }
   text-align: center; color: var(--muted-2); padding: 48px 20px;
   font: 300 15px/1.5 var(--sans);
 }
-.rowbtns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.rowbtns .btn { width: auto; flex: 1 1 auto; min-width: 92px; }
 
-/* ======================================================= template editor */
-.stagelist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.stagerow {
-  display: flex; align-items: center; gap: 12px;
-  background: var(--surface); border: 1px solid var(--line-soft);
-  border-radius: var(--r-row); padding: 14px 16px; min-height: 78px;
-}
-.stagerow.bulkrow { border: 1.5px solid var(--accent); }
-.stagerow .ord { flex: 0 0 auto; width: 20px; font: 400 11px/1 var(--mono); color: var(--muted-2); }
-.stagerow .body { flex: 1; min-width: 0; }
-.stagerow .body b { display: block; font: 500 16px/1.3 var(--sans); }
-.stagerow .body em {
-  display: block; font-style: normal; font: 300 13px/1.35 var(--sans);
-  color: var(--muted); margin-top: 5px;
-}
-.stagerow .body em.cue { color: var(--muted-2); font-size: 12px; }
-.stagerow .body .pill { margin-left: 8px; }
-.stagerow .movers { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
-.mv {
-  width: 44px; height: 34px; border-radius: 10px; background: var(--surface-2);
-  display: grid; place-items: center; font-size: 14px; color: var(--muted);
-}
-.mv[disabled] { opacity: .28; }
-.bakestep { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.bakestep input {
-  min-width: 0; padding: 12px 12px; min-height: 56px;
-  background: var(--surface); color: var(--ink);
-  border: 1px solid var(--line-soft); border-radius: var(--r-chip); font: inherit;
-}
-.bakestep input[data-bs="label"] { flex: 1 1 40%; }
-.bakestep input[type="number"] { flex: 0 1 74px; text-align: center; }
-.bakestep span { font: 400 11px/1 var(--mono); color: var(--muted-2); flex: 0 0 auto; }
-
-/* ============================================================== planner */
-.callout {
-  background: var(--surface); border: 1px solid var(--line-soft);
-  border-radius: var(--r-row); padding: 16px 18px; margin-bottom: 12px;
-  font: 300 13.5px/1.5 var(--sans); color: var(--muted);
-}
-.callout b { display: block; font: 500 14.5px/1.35 var(--sans); color: var(--ink); margin-bottom: 6px; }
-.callout.warn { background: var(--accent-wash); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
-.callout.warn b { color: var(--accent-deep); padding-left: 32px; position: relative; min-height: 22px; }
-.callout.warn b::before {
-  content: '!'; position: absolute; left: 0; top: -1px;
-  width: 22px; height: 22px; border-radius: 11px;
+/* The one thing allowed to shout. Terracotta is this screen's single accent
+ * when it is showing, so nothing else on the live view competes with it. */
+.alarmbar {
+  display: block; width: 100%; text-align: left;
   background: var(--accent); color: var(--on-accent);
-  display: grid; place-items: center; font: 700 13px/1 var(--sans);
+  border-radius: var(--r-row); padding: 16px 18px; margin-bottom: 14px;
+  font: 400 14.5px/1.4 var(--sans);
 }
-.callout ul { margin: 6px 0 0; padding: 0; list-style: none; }
-.callout li {
-  display: flex; justify-content: space-between; align-items: center; gap: 14px;
-  min-height: 62px; border-top: 1px solid var(--line-soft); line-height: 1.4;
-}
-.callout li:first-child { border-top: 0; }
-.callout li .linkbtn { flex: 0 0 auto; text-align: right; }
-
-.plan { list-style: none; margin: 0 0 18px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.planday {
-  font: 400 11px/1 var(--serif); letter-spacing: .2em; text-transform: uppercase;
-  color: var(--muted); padding: 14px 4px 6px;
-}
-.planrow {
-  display: flex; align-items: center; gap: 16px;
-  min-height: 62px; padding: 8px 18px; border-radius: 18px;
-  background: var(--surface);
-  touch-action: pan-y;                    /* sideways belongs to the drag */
-  user-select: none; -webkit-user-select: none;
-}
-.planrow.sub { margin-left: 18px; background: transparent; }
-.planrow.night { background: var(--night-row); color: var(--night-row-ink); }
-.planrow.night::before {
-  content: ''; flex: 0 0 auto; width: 17px; height: 17px; background: var(--moon);
-  -webkit-mask: var(--ill-moon) no-repeat center / contain;
-  mask: var(--ill-moon) no-repeat center / contain;
-  margin-right: -6px;
-}
-.planrow.dragging { background: var(--surface-2); }
-.planrow.shifted .when { color: var(--accent); }
-.planrow .when { flex: 0 0 auto; width: 50px; font: 700 16px/1 var(--mono); }
-.planrow .what { flex: 1; min-width: 0; }
-.planrow .what b { display: block; font: 300 15px/1.25 var(--sans); }
-.planrow .what em {
-  display: block; font-style: normal; font: 300 12.5px/1.4 var(--sans);
-  color: var(--muted-2); margin-top: 3px;
-}
-.planrow.night .what em { color: inherit; opacity: .6; }
-.planrow .what em.til { opacity: .7; }
-.planrow .grip { flex: 0 0 auto; color: var(--line); font-size: 12px; letter-spacing: -2px; }
-
-/* ======================================================= process tracker */
-.subcount {
-  display: flex; align-items: center; gap: 12px;
-  background: var(--butter); color: var(--butter-ink);
-  border-radius: var(--r-row); padding: 12px 12px 12px 20px;
-  min-height: 64px; margin-bottom: 14px;
-}
-.subcount .k { flex: 1; font: 400 15px/1.25 var(--sans); }
-.subcount .v { font: 400 11px/1.4 var(--mono); letter-spacing: .06em; opacity: .7; text-align: right; }
-.subcount .btn {
-  width: auto; flex: 0 0 auto; min-height: 52px; padding: 0 22px;
-  border-radius: var(--r-chip); background: var(--ink); color: var(--bg); border: 0;
-  font-size: 14px;
-}
-.subcount.due .btn { background: var(--accent); color: var(--on-accent); }
-
-.doing {
-  background: var(--surface); border: 1px solid var(--line-soft);
-  border-radius: 24px; padding: 18px 20px; margin-bottom: 12px;
-  font: 300 15px/1.55 var(--sans); color: var(--muted);
-}
-.nextup {
-  position: relative; overflow: hidden;
-  background: var(--surface); border: 1px solid var(--line-soft);
-  border-radius: 24px; padding: 20px 22px; margin-bottom: 12px;
-}
-.nextup .k { font: 700 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
-.nextup b { display: block; font: 400 19px/1.2 var(--sans); margin-top: 10px; max-width: 250px; }
-.nextup em { display: block; font-style: normal; font: 300 13px/1.45 var(--sans); color: var(--muted); margin-top: 6px; max-width: 250px; }
-.nextup::after {
-  content: ''; position: absolute; right: -12px; bottom: -16px;
-  width: 100px; height: 100px; background: currentColor; opacity: .22;
-  -webkit-mask: var(--ill-wheat) no-repeat center / contain;
-  mask: var(--ill-wheat) no-repeat center / contain;
-}
-
-.timeline { list-style: none; margin: 0; padding: 0; }
-.tlrow {
-  display: flex; align-items: center; gap: 14px;
-  min-height: 56px; padding: 6px 4px;
-  transition: opacity .26s ease;
-}
-.tlrow::before {
-  content: ''; flex: 0 0 auto; width: 22px; height: 22px; border-radius: 11px;
-  border: 1.5px solid var(--line); background: transparent;
-  transition: background-color .22s ease, border-color .22s ease;
-}
-.tlrow.done::before {
-  border-color: var(--ink); background: var(--ink);
-  -webkit-mask: none;
-}
-.tlrow.done .what b { text-decoration: line-through; }
-.tlrow.done { opacity: .5; }
-.tlrow.running::before { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 6px var(--surface); }
-.tlrow.running .what b { font-weight: 500; }
-.tlrow.due::before { border-color: var(--accent); }
-.tlrow.sub { margin-left: 20px; }
-.tlrow .when { flex: 0 0 auto; width: 48px; font: 400 14px/1.3 var(--mono); color: var(--muted); }
-.tlrow .when em { display: block; font-style: normal; font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-2); margin-top: 3px; }
-.tlrow .what { flex: 1; min-width: 0; }
-.tlrow .what b { display: block; font: 300 15px/1.25 var(--sans); }
-.tlrow .what em {
-  display: block; font-style: normal; font: 300 12px/1.4 var(--sans);
-  color: var(--muted-2); margin-top: 3px;
-}
-.tlrow .what em.cue { color: var(--muted); }
-.tlrow .edit {
-  flex: 0 0 auto; min-width: 52px; min-height: 44px; border-radius: 12px;
-  font: 400 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
-  color: var(--accent);
-}
-.timeline.compact .tlrow { min-height: 46px; }
 
 /* =============================================================== toast */
 #toast {

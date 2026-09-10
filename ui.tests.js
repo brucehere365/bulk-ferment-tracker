@@ -24,18 +24,33 @@ function ok(name, cond, extra) {
 }
 function head(s) { console.log('\n' + s + '\n' + '-'.repeat(s.length)); }
 
-var dom = new JSDOM(fs.readFileSync(path.join(DIR, 'index.html'), 'utf8'), {
-  runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://example.test/'
-});
-var w = dom.window;
-w.matchMedia = w.matchMedia || function () { return { matches: false, addListener: function () {}, removeListener: function () {} }; };
-w.navigator.vibrate = function () {};
-w.AudioContext = function () { this.state = 'running'; this.currentTime = 0;
-  this.createOscillator = function () { return { frequency: {}, connect: function () {}, start: function () {}, stop: function () {} }; };
-  this.createGain = function () { return { gain: { setValueAtTime: function () {}, exponentialRampToValueAtTime: function () {} }, connect: function () {} }; };
-  this.destination = {}; this.resume = function () {}; };
-w.URL.createObjectURL = function () { return 'blob:x'; };
-w.URL.revokeObjectURL = function () {};
+/* A window with a clock we can push forward. The app owns no timers of its own
+ * — every number is rebuilt from stored timestamps against `Date.now()` — so
+ * moving that one function is the whole of "eight hours later". */
+function boot(seed, offsetMs) {
+  var d = new JSDOM(fs.readFileSync(path.join(DIR, 'index.html'), 'utf8'), {
+    runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://example.test/'
+  });
+  var win = d.window;
+  win.matchMedia = win.matchMedia || function () { return { matches: false, addListener: function () {}, removeListener: function () {} }; };
+  win.navigator.vibrate = function () {};
+  win.AudioContext = function () { this.state = 'running'; this.currentTime = 0;
+    this.createOscillator = function () { return { frequency: {}, connect: function () {}, start: function () {}, stop: function () {} }; };
+    this.createGain = function () { return { gain: { setValueAtTime: function () {}, exponentialRampToValueAtTime: function () {} }, connect: function () {} }; };
+    this.destination = {}; this.resume = function () {}; };
+  win.URL.createObjectURL = function () { return 'blob:x'; };
+  win.URL.revokeObjectURL = function () {};
+  var real = win.Date.now;
+  win.offset = offsetMs || 0;
+  win.Date.now = function () { return real() + win.offset; };
+  if (seed) win.localStorage.setItem('bft.v1', seed);
+  ['model.js', 'app.js'].forEach(function (f) {
+    win.eval(fs.readFileSync(path.join(DIR, f), 'utf8'));
+  });
+  return win;
+}
+
+var w = boot(null, 0);
 
 var downloads = [];
 var origClick = w.HTMLElement.prototype.click;
@@ -43,10 +58,6 @@ w.HTMLElement.prototype.click = function () {
   if (this.tagName === 'A' && this.download) { downloads.push({ name: this.download }); return; }
   return origClick.apply(this, arguments);
 };
-
-['model.js', 'process.js', 'app.js'].forEach(function (f) {
-  w.eval(fs.readFileSync(path.join(DIR, f), 'utf8'));
-});
 
 var doc = w.document;
 function $(sel, root) { return (root || doc).querySelector(sel); }
@@ -57,397 +68,489 @@ function click(el) {
   el.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
 }
 function clickAct(a, root) { click(act(a, root)); }
+function key(k) { click($('[data-key="' + k + '"]', sheet())); }
 function sheet() { return $('#sheet-root .sheet'); }
 function text() { return doc.getElementById('app').textContent; }
 function toastText() { return doc.getElementById('toast').textContent; }
-function localVal(ms) {
-  var d = new Date(ms - new Date(ms).getTimezoneOffset() * 60000);
-  return d.toISOString().slice(0, 16);
-}
+function stored() { return JSON.parse(w.localStorage.getItem('bft.v1')); }
+function bake() { var s = stored(); return s.bakes.filter(function (b) { return b.id === s.activeId; })[0]; }
 function setInput(el, v) {
   el.value = v;
   el.dispatchEvent(new w.Event('input', { bubbles: true }));
   el.dispatchEvent(new w.Event('change', { bubbles: true }));
 }
+/* Hours later. Nothing about the bake is touched — only the clock the app
+ * reads — which is the point: a slept phone is exactly this. */
+function advance(hours) {
+  w.offset += hours * 3600000;
+  w.dispatchEvent(new w.Event('pageshow'));
+}
+function preshapeAt(s) { var m = /Preshape at\s*(\d\d:\d\d)/.exec(s); return m && m[1]; }
 
 head('BOOT');
-ok('lands on the mode picker', /What are you doing\?/.test(text()));
-ok('offers all three modes', act('mode-full') && act('mode-plan') && act('mode-bulk'));
-ok('seeds Bruce’s Loaf', JSON.parse(w.localStorage.getItem('bft.v1')).templates[0].name === "Bruce's Loaf");
+ok('lands straight on the bulk ferment form', !!$('#startform'));
+ok('there is no mode picker left to choose from', !act('mode-bulk') && !act('mode-full') && !act('mode-plan'));
+ok('and nowhere else for the app to be', !act('templates') && !act('loaves'));
+/* Booting with nothing must not write anything: the old unconditional boot
+ * save is what turned an unreadable payload into a permanently blank one. */
+ok('a boot with no data writes nothing at all', w.localStorage.getItem('bft.v1') === null);
+ok('restore is reachable from the empty screen', !!act('storage'));
 
-head('TEMPLATE EDITOR — add, edit, reorder, delete');
-clickAct('templates');
-ok('template list shows the seeded process', /Bruce.s Loaf/.test(text()) && /11 stages/.test(text()));
-clickAct('tpl-edit');
-var rows = function () { return $$('.stagerow'); };
-ok('editor lists 11 stages', rows().length === 11);
-ok('first stage is the revival feed', /Starter revival/.test(rows()[0].textContent));
-ok('bulk row says the length comes from the model',
-  /re-read live from the dough temp/.test($('.bulkrow').textContent));
-
-var thirdName = rows()[2].querySelector('b').textContent;
-click(rows()[2].querySelector('[data-act="st-down"]'));
-ok('moving a stage down reorders it', rows()[3].querySelector('b').textContent === thirdName);
-click(rows()[3].querySelector('[data-act="st-up"]'));
-ok('moving it back restores the order', rows()[2].querySelector('b').textContent === thirdName);
-
-click(rows()[2].querySelector('.body'));
-ok('tapping a stage opens its editor', sheet() && /Mix \+ autolyse/.test(sheet().textContent));
-setInput($('#f-dur', sheet()), '75');
-setInput($('#f-name', sheet()), 'Mix + long autolyse');
-setInput($('#f-cues', sheet()), 'Elastic\nNo dry flour\nSmells of wheat');
-clickAct('st-save', sheet());
-ok('edits are saved', /Mix \+ long autolyse/.test(text()) && /75 min timer/.test(text()));
-ok('cues are saved', /Smells of wheat/.test(text()));
-
-clickAct('st-add');
-ok('add-stage offers every type', $$('[data-newtype]', sheet()).length === w.BFProcess.TYPES.length);
-click($('[data-newtype="active"]', sheet()));
-ok('the new stage is appended and opened', rows().length === 12 && sheet());
-clickAct('st-del', sheet());
-clickAct('yes', sheet());
-ok('deleting a stage removes it', rows().length === 11);
-
-clickAct('templates');
-clickAct('tpl-dupe');
-ok('duplicate opens a fresh editable copy', /copy/i.test($('.topbar h1').textContent));
-clickAct('templates');
-ok('both processes are listed', $$('[data-act="tpl-edit"]').length === 2);
-clickAct('tpl-export');
-ok('template exports as JSON', downloads.some(function (d) { return /\.json$/.test(d.name); }));
-click($$('[data-act="tpl-del"]')[1]);
-clickAct('yes', sheet());
-ok('deleting a process removes it', $$('[data-act="tpl-edit"]').length === 1);
-
-head('REVERSE PLANNER — the worked example, through the UI');
-clickAct('home');
-clickAct('mode-plan');
-ok('planner form is up', $('#planform'));
-var FRI = new Date(2026, 7, 21, 9, 45, 0, 0).getTime();
-var form = $('#planform');
-setInput(form.elements.finishAt, localVal(FRI));
-setInput(form.elements.bulkTempC, '22');
-ok('starter defaults to “from the fridge”', act('t-fridge').getAttribute('aria-checked') === 'true');
-form.dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
-
-var plan = function () { return JSON.parse(w.localStorage.getItem('bft.v1')).draft; };
-function row(name) { return plan().events.filter(function (e) { return e.name.indexOf(name) === 0; })[0]; }
-function hm(ms) { var d = new Date(ms); return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()] + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); }
-ok('a plan was produced', !!plan());
-console.log('    mix ' + hm(row('Mix').start) + ' · bulk ' + hm(row('Bulk').start) +
-  ' · shape ' + hm(row('Shape').start) + ' · fridge ' + hm(row('Cold proof').start) +
-  ' · final feed ' + hm(plan().events.filter(function(e){return e.feedRole==='final';})[0].start));
-ok('timeline is grouped by day', $$('.planday').length >= 3);
-ok('days are named', /Thursday/.test($$('.planday').map(function (d) { return d.textContent; }).join(' ')));
-ok('every row has a time, a name and a what-to-do',
-  $$('.planrow').every(function (r) { return $('.when', r) && $('.what b', r) && $('.what em', r); }));
-ok('it explains where the bulk length came from', /1 ÷ r\(22 °C\)/.test(text()));
-ok('it reports moving the night-time feed', /Final starter feed moved from/.test(text()));
-ok('no plan row is flagged as a night-time hands-on step', $$('.planrow.night').length === 0);
-
-head('DRAG A ROW TO ADJUST');
-var shapeBefore = row('Shape').start;
-var mixRow = $$('.planrow').filter(function (r) { return /Mix/.test(r.textContent); })[0];
-function ptr(type, el, x) {
-  var e = new w.MouseEvent(type, { bubbles: true, clientX: x, clientY: 10 });
-  Object.defineProperty(e, 'pointerId', { value: 1 });
-  el.dispatchEvent(e);
-}
-mixRow.setPointerCapture = function () {};
-ptr('pointerdown', mixRow, 200);
-ptr('pointermove', mixRow, 128);       // -72px @ 2.4px/min = -30 min
-ptr('pointerup', mixRow, 128);
-ok('dragging the mix row moved it 30 min earlier',
-  Math.round((row('Mix').start - (shapeBefore - (shapeBefore - row('Mix').start))) / 60000) === 0 &&
-  Math.abs(row('Shape').start - (shapeBefore - 30 * 60000)) < 1000,
-  hm(row('Shape').start));
-ok('the drag was announced', /Moved to/.test(toastText()));
-
-var t2 = $$('.planrow').filter(function (r) { return /Coil folds 1/.test(r.textContent); })[0];
-t2.setPointerCapture = function () {};
-ptr('pointerdown', t2, 200); ptr('pointerup', t2, 200);
-ok('a tap with no movement opens the exact-time sheet', sheet() && $('#nz-time', sheet()));
-clickAct('cancel', sheet());
-
-head('ICS EXPORT');
-clickAct('plan-ics');
-ok('exports a .ics file', downloads.some(function (d) { return /\.ics$/.test(d.name); }));
-
-head('LIVE TRACKER — start the plan and run it');
-clickAct('plan-start');
-ok('dropped into the live tracker', /Timeline/.test(text()));
-var proc = function () { var s = JSON.parse(w.localStorage.getItem('bft.v1')); return s.processes.filter(function (p) { return p.id === s.activeProcessId; })[0]; };
-ok('the plan is now the active bake', !!proc());
-ok('future stages are pre-scheduled', proc().events.every(function (e) { return e.plannedStart != null; }));
-ok('nothing is ticked off yet', proc().events.every(function (e) { return e.actualEnd == null; }));
-ok('now card offers to start the first stage', /Start /.test(act('proc-start').textContent));
-ok('next up is shown', $('.nextup'));
-ok('the timeline lists every stage', $$('.tlrow').length >= 11);
-
-ok('a due starter feed is put in front of you, not skipped',
-  !!$('.subcount') && /[Ss]tarter/.test($('.subcount').textContent));
-
-/* Tick every feed off, then work down the bench stages to the bulk. */
-var guard = 0;
-while ($('.subcount [data-act="proc-tick"]') && guard++ < 10) click($('.subcount [data-act="proc-tick"]'));
-ok('every starter feed can be ticked off', guard >= 3);
-
-guard = 0;
-while (guard++ < 40) {
-  if (act('proc-start')) clickAct('proc-start');
-  if (sheet() && $('#numval', sheet())) break;     // the bulk asks for a temperature
-  var main = $('.actions [data-act="proc-tick"]');
-  if (!main) break;
-  click(main);
-  if (sheet() && $('#numval', sheet())) break;
-}
-ok('ticking stages off advanced the chain', proc().events.filter(function (e) { return e.actualEnd != null; }).length >= 4);
-
-head('BULK HANDOFF — the existing engine, not a reimplementation');
-ok('starting the bulk asks for a dough temperature',
-  sheet() && /Dough temperature/.test(sheet().textContent));
-setInput($('#numval', sheet()), '20');
-clickAct('save', sheet());
-var st0 = JSON.parse(w.localStorage.getItem('bft.v1'));
-var rec = st0.bakes.filter(function (b) { return b.id === proc().bulkBakeId; })[0];
-ok('a real bulk-tracker bake record was created', !!rec && rec.readings.length === 1);
-ok('it is the app-wide active bulk, so every existing control works', st0.activeId === rec.id);
-ok('the bulk chart appears in place', $('.chartwrap svg'));
-ok('log temp and log rise are the original controls', act('logtemp') && act('lograise'));
-ok('progress, target rise and calibration are on screen',
-  /Progress/.test(text()) && /Target rise/.test(text()) && /Expected rise now/.test(text()));
-
-var bulkEv = function () { return proc().events.filter(function (e) { return e.chain && e.type === 'bulk'; })[0]; };
-var shapeEv = function () { return proc().events.filter(function (e) { return e.name === 'Shape'; })[0]; };
-var Mm = w.BFModel;
-var predicted = Mm.stateAt(rec.readings, Date.now()).predictedEnd;
-console.log('    plan said ' + (Mm.hoursAt(22)).toFixed(2) + ' h at 22 °C; dough is 20 °C so the model says ' + Mm.hoursAt(20).toFixed(2) + ' h');
-ok('downstream now follows the accumulator, not the plan',
-  Math.abs(w.BFProcess.projectTimeline(proc(), Date.now(), Mm.stateAt(rec.readings, Date.now()))
-    .chain.filter(function (e) { return e.name === 'Shape'; })[0].start - predicted) < 1000);
-ok('the timeline says so out loud', /from the dough, not the plan/.test(text()));
-
-clickAct('logtemp');
-ok('logging a temperature reuses the original number sheet', sheet() && $('#numval', sheet()));
-setInput($('#numval', sheet()), '19');
-clickAct('save', sheet());
-ok('the reading landed in the same bake record',
-  JSON.parse(w.localStorage.getItem('bft.v1')).bakes.filter(function (b) { return b.id === rec.id; })[0].readings.length === 2);
-
-head('JUDGEMENT STAGES');
-var mainBtn = function () { return $('.actions [data-act="proc-tick"]'); };
-ok('the bulk will not tick itself off', act('proc-start') === null && mainBtn() !== null);
-ok('the button asks for confirmation, not completion', /Confirm/.test(mainBtn().textContent));
-ok('the cues are on screen', /Jiggles as one mass/.test(text()));
-ok('and it says whose call it is', /cannot say done/i.test(text()));
-
-head('FOLDS AS A SUB-COUNTDOWN UNDER THE BULK');
-ok('the next fold is shown under the bulk countdown', $('.subcount') && /Coil folds/.test($('.subcount').textContent));
-click($('.subcount [data-act="proc-tick"]'));
-ok('ticking a fold does not end the bulk',
-  proc().events.filter(function (e) { return e.kind === 'rep' && e.actualEnd != null; }).length === 1 &&
-  bulkEv().actualEnd == null);
-ok('the next fold takes its place', /Coil folds 2/.test($('.subcount').textContent));
-
-head('PER-STAGE NOTES');
-click($('[data-act="proc-note"]'));
-setInput($('#sn-text', sheet()), 'Dough 20.1 at mix, kitchen cold.');
-clickAct('sn-save', sheet());
-ok('the note is saved against the stage', bulkEv().log === 'Dough 20.1 at mix, kitchen cold.');
-ok('and shows on the button', /Dough 20\.1/.test(act('proc-note').textContent));
-
-head('RECONCILIATION');
-var plannedShape = shapeEv().plannedStart;
-click(mainBtn());                         // confirm the bulk done, now
-var liveShape = shapeEv();
-ok('confirming the bulk starts the next stage there and then', liveShape.actualStart != null);
-ok('the shape stage really did move off its planned time',
-  Math.abs(liveShape.actualStart - plannedShape) > 60 * 60000);
-ok('the bulk record was closed out',
-  JSON.parse(w.localStorage.getItem('bft.v1')).bakes.filter(function (b) { return b.id === rec.id; })[0].status === 'done');
-ok('the app-wide active bulk was released', JSON.parse(w.localStorage.getItem('bft.v1')).activeId === null);
-
-head('HOME AND RESUME');
-clickAct('home');
-ok('home shows the bake in progress', /Bake in progress/.test(text()));
-clickAct('resume-process');
-ok('resume drops straight back in', $('.nextup') || /Timeline/.test(text()));
-
-head('BULK-ONLY MODE IS UNTOUCHED');
-clickAct('home');
-clickAct('mode-bulk');
-ok('the original start screen is intact', $('#startform') && /First dough temperature/.test(text()));
+head('DECIMALS — a comma is a full stop');
+ok('the first-temperature field is not a type=number', $('#startform').elements.temp.type === 'text');
+ok('but still opens the decimal keyboard', $('#startform').elements.temp.getAttribute('inputmode') === 'decimal');
 var sf = $('#startform');
-setInput(sf.elements.temp, '24.5');
+setInput(sf.elements.name, 'Comma bake');
+setInput(sf.elements.temp, '23,5');
 sf.dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
-ok('a standalone bulk starts', /Preshape at/.test(text()));
-ok('it did not touch the running full bake', proc().status === 'active');
-ok('the original chart and readings list are there', $('.chartwrap svg') && $('.readings'));
-clickAct('menu');
-clickAct('abandon', sheet());
-clickAct('yes', sheet());
+ok('a comma starts the bake', !!preshapeAt(text()));
+ok('and is read as 23.5, not 23', bake().readings[0].temp === 23.5, String(bake().readings[0].temp));
 
-head('HISTORY');
-ok('abandoning a standalone bulk lands in history', /History/.test(text()));
-ok('the abandoned bulk is listed under bulk ferments', /Bulk ferments/.test(text()));
-clickAct('csv');
-ok('readings CSV still exports', downloads.some(function (d) { return /^bulk-ferment-.*\.csv$/.test(d.name); }));
+head('THE ZOOM FIX IS IN THE STYLESHEET');
+var css = fs.readFileSync(path.join(DIR, 'styles.css'), 'utf8');
+ok('taps on controls do not double-tap-zoom', /touch-action:\s*manipulation/.test(css));
+ok('the keypad keys are covered by name', /\[data-key\][^{}]*\{[^}]*touch-action:\s*manipulation/.test(css));
+ok('and a stray tap selects nothing', /\[data-key\][^{}]*\{[^}]*user-select:\s*none/.test(css));
+ok('no field is small enough to make Safari zoom to reach it',
+  /input,\s*textarea,\s*select\s*\{\s*font-size:\s*max\(16px/.test(css));
+ok('and no rule sneaks a sub-16px field back in',
+  !/font-size:\s*1[0-5](\.\d+)?px/.test(css.replace(/[^\n]*font:[^\n]*\n/g, '')) ||
+  !/label\.field (input|textarea)[^{]*\{[^}]*font-size:\s*1[0-5]px/.test(css));
 
-/* Finish the full bake so it reaches history too. */
-clickAct('back');
-ok('back from history returns to the running bake', !!$('.nextup') || /Timeline/.test(text()));
-clickAct('proc-menu');
-clickAct('proc-ics', sheet());
-ok('the rest of a running bake exports as .ics', downloads.filter(function (d) { return /\.ics$/.test(d.name); }).length >= 2);
-clickAct('proc-menu');
-clickAct('proc-finish', sheet());
-clickAct('yes', sheet());
-ok('finishing the bake lands in history', /History/.test(text()));
-ok('full bakes get their own section', /Full bakes/.test(text()));
-ok('and the bulk it owned is not listed separately',
-  (text().match(/— bulk/g) || []).length === 0);
-ok('finishing opens the bake card straight away', act('closebake') !== null);
-if (act('openproc')) clickAct('openproc');
-ok('opening a finished bake shows planned against actual', /planned /.test(text()));
-ok('and the bulk chart it ran', !!$('.chartwrap svg'));
-clickAct('csv-stages');
-ok('stage-level CSV exports', downloads.some(function (d) { return /^bakes-stages-.*\.csv$/.test(d.name); }));
-clickAct('back');
-ok('back with nothing running goes home', /What are you doing\?/.test(text()) && !/Bake in progress/.test(text()));
+head('LIVE VIEW');
+ok('the hero says when to preshape', !!preshapeAt(text()));
+ok('the chart is drawn', !!$('.chartwrap svg'));
+ok('the readings list has the first reading', $$('.reading').length === 1);
+ok('progress, dough temp, target and expected rise are all on screen',
+  /Progress/.test(text()) && /Dough temp/.test(text()) && /Target rise/.test(text()) && /Expected rise now/.test(text()));
+ok('the cue list is instructions, with nothing to tick',
+  /Domed, not flat/.test(text()) && $$('.cues input').length === 0);
+ok('the nav pill is down to two destinations', $$('.navpill button').length === 2);
 
-head('UNSOCIABLE HOURS, THROUGH THE UI');
-clickAct('mode-plan');
-var pf = $('#planform');
-setInput(pf.elements.finishAt, localVal(new Date(2026, 7, 21, 17, 0, 0, 0).getTime()));
-setInput(pf.elements.bulkTempC, '22');
-click(act('t-fridge'));                    // starter already active
-pf.dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
-ok('a 17:00 finish makes it flex the cold proof', /Cold proof (stretched|squeezed) to/.test(text()));
-ok('it says why', /out of the night/.test(text()));
-ok('and the result has no night-time hands-on rows', $$('.planrow.night').length === 0);
-var flexed = plan().params.coldMin;
-ok('the flex stayed inside the 8–16 h range', flexed >= 480 && flexed <= 960, String(flexed / 60) + ' h');
+head('LOGGING A TEMPERATURE THROUGH THE KEYPAD');
+advance(1);
+clickAct('logtemp');
+ok('the number sheet opens on the last reading', !!$('#numval', sheet()));
+key('2'); key('4'); key('.'); key('5');
+ok('the keypad builds the number', $('#numval', sheet()).value === '24.5');
+key('del');
+ok('delete takes the last character off', $('#numval', sheet()).value === '24.');
+key('5');
+clickAct('save', sheet());
+ok('the reading is stored', bake().readings.length === 2 && bake().readings[1].temp === 24.5);
+ok('and the list shows it', $$('.reading').length === 2);
 
-setInput($('#planform').elements.finishAt, localVal(new Date(2026, 7, 21, 4, 0, 0, 0).getTime()));
-$('#planform').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
-ok('a 04:00 bake time is called out rather than silently planned',
-  /puts you in the kitchen at night/.test(text()));
-ok('it names the bake steps that cannot move', /Preheat the oven at 0[0-3]:/.test(text()));
+head('A COMMA TYPED ON THE PHONE KEYBOARD');
+advance(1);
+clickAct('logtemp');
+setInput($('#numval', sheet()), '21,5');
+ok('becomes a full stop as it lands', $('#numval', sheet()).value === '21.5');
+clickAct('save', sheet());
+ok('and is saved as 21.5', bake().readings[2].temp === 21.5, String(bake().readings[2].temp));
 
-head('FULL BAKE — pick a loaf, start now');
-clickAct('home');
-clickAct('mode-full');
-ok('full bake asks what you are baking, not when you want it out',
-  /What are you baking\?/.test(text()) && !$('#planform'));
-ok('it is a different screen from the planner', !act('mode-plan') || !$('#planform'));
-ok('every loaf is offered as a card', $$('.loaf').length === $$('[data-act="loaf-pick"]').length &&
-  $$('.loaf').length >= 1);
-ok('a loaf card says what it is', /Bruce.s Loaf/.test($('.loaf').textContent));
-ok('and how long it runs', /11 stages · ~\d+ h end to end/.test($('.loaf').textContent));
-ok('there is a way through to editing the loaves', !!act('templates'));
-
-var t0 = Date.now();
-clickAct('loaf-pick');
-ok('picking a loaf goes to the start screen, not the planner',
-  /Start now\?/.test(text()) && !$('#planform'));
-ok('it names the loaf you picked', /Bruce.s Loaf/.test($('.topbar').textContent));
-ok('it leads with the very next thing to do', /First step, straight away/.test(text()));
-ok('and says when the loaf comes out', /Out of the oven/.test(text()));
-ok('the whole bake is listed as a schedule', $$('.planrow').length >= 11 && $$('.planday').length >= 2);
-ok('the preview does not pretend to be draggable', $$('.planrow[data-drag]').length === 0);
-ok('starter defaults to “in the fridge”', act('t-ready-fridge').getAttribute('aria-checked') === 'true');
-
-var firstRow = function () { return $('.planrow .when').textContent; };
-var wasFirst = firstRow(), wasRows = $$('.planrow').length;
-click(act('t-ready-fridge'));
-ok('turning the fridge off drops the revival feeds', $$('.planrow').length < wasRows);
-ok('and the plan still starts now', firstRow() === wasFirst);
-
-clickAct('ready-temp');
-ok('the temperature opens the big number pad', sheet() && $('#numval', sheet()));
+head('THE UNATTENDED GAP');
+advance(3);
+clickAct('logtemp');
+ok('a three-hour gap is asked about before anything is logged', /It has been 3h/.test(sheet().textContent));
+click($('[data-gap="cooler"]', sheet()));
+ok('saying it was cooler asks how cool', !$('#gapinterim', sheet()).hidden);
+setInput($('#gaptemp', sheet()), '19,5');
+clickAct('gapsave', sheet());
 setInput($('#numval', sheet()), '20');
 clickAct('save', sheet());
-ok('a cooler bulk is taken', /Bulk around 20 °C/.test(text()));
-ok('and it lengthens the bulk', /1 ÷ r\(20 °C\)/.test(text()));
+ok('the gap temperature is stored, comma and all', bake().readings[3].gapTemp === 19.5, String(bake().readings[3].gapTemp));
+ok('and the reading says the gap was held', /gap held at 19\.5/.test(text()));
 
-clickAct('ready-start');
-ok('starting drops you straight into the stage-by-stage tracker', /Timeline/.test(text()));
-var fwd = function () { var s = JSON.parse(w.localStorage.getItem('bft.v1')); return s.processes.filter(function (p) { return p.id === s.activeProcessId; })[0]; };
-ok('it is a real bake, not a draft', !!fwd() && fwd().status === 'active');
-ok('it was planned forwards from now', Math.abs(fwd().params.startAt - t0) < 60000);
-ok('the forward plan is recorded as such', fwd().params.direction === 'forward');
-ok('the first thing to do is right now', Math.abs(fwd().events[0].plannedStart - t0) < 60000);
-ok('every stage is pre-scheduled, same as a reverse plan',
-  fwd().events.every(function (e) { return e.plannedStart != null; }));
-ok('the bulk length came from the temperature you gave it',
-  Math.abs(fwd().params.bulkHours - w.BFModel.hoursAt(20)) < 1e-9);
-ok('it reuses the same process view', !!act('proc-menu') && !!$('.tlrow'));
+head('EDITING A READING REPLAYS, IT DOES NOT PATCH');
+var endBefore = preshapeAt(text());
+var second = bake().readings[1];
+click($('[data-act="edit"][data-id="' + second.id + '"]'));
+ok('the edit sheet is populated', $('#e-temp', sheet()).value === '24.5');
+ok('the temp field takes a comma too', $('#e-temp', sheet()).type === 'text');
+setInput($('#e-temp', sheet()), '27,5');
+clickAct('esave', sheet());
+ok('the edit is stored as a number', bake().readings[1].temp === 27.5, String(bake().readings[1].temp));
+ok('it recalculated from the first reading', /Recalculated from the first reading/.test(toastText()));
+ok('and the projection moved', preshapeAt(text()) !== endBefore);
 
-clickAct('proc-menu');
-clickAct('proc-abandon', sheet());
+head('CALIBRATION FROM THE JAR');
+advance(1);
+clickAct('lograise');
+setInput($('#numval', sheet()), '55');
+clickAct('save', sheet());
+ok('a jar reading is stored', bake().readings.slice(-1)[0].rise === 55);
+ok('and the app says what it learned in words',
+  /Tracking the table\.|Running about \d+% (faster|slower) than the table\./.test(text()));
+ok('resetting calibration is offered once there is a jar reading', !!act('resetcal'));
+clickAct('resetcal');
 clickAct('yes', sheet());
-ok('abandoning it leaves nothing running',
-  !JSON.parse(w.localStorage.getItem('bft.v1')).activeProcessId);
+ok('reset leaves the readings alone', bake().readings.filter(function (r) { return r.rise != null; }).length === 1);
+ok('but stops them steering the projection',
+  bake().readings.filter(function (r) { return r.ignoreCal; }).length === 1);
 
-head('JSON IMPORT ROUND TRIP');
-/* Export the edited template, then import the bytes back and check it survived. */
-var exported = null;
-w.Blob = function (parts) { exported = parts.join(''); this.parts = parts; };
-clickAct('home'); clickAct('templates'); clickAct('tpl-export');
-ok('export produced JSON', exported && JSON.parse(exported).kind === 'bulk-ferment-template');
-var payload = exported;
-
-var picked = null;
-w.HTMLInputElement.prototype.click = function () { picked = this; };
-var origFR = w.FileReader;
-w.FileReader = function () {
-  var self = this;
-  this.readAsText = function () { self.result = payload; self.onload(); };
-};
-clickAct('tpl-import');
-Object.defineProperty(picked, 'files', { value: [{ name: 't.json' }], configurable: true });
-picked.dispatchEvent(new w.Event('change', { bubbles: true }));
-w.FileReader = origFR;
-ok('import added a process', $$('[data-act="tpl-edit"]').length === 2);
-var imported = JSON.parse(w.localStorage.getItem('bft.v1')).templates[1];
-var original = JSON.parse(payload).template;
-ok('every stage came back', imported.stages.length === original.stages.length);
-ok('the edits made earlier survived the trip',
-  imported.stages.some(function (st) { return st.name === 'Mix + long autolyse' && st.durationMin === 75; }));
-ok('cues came back too',
-  imported.stages.some(function (st) { return st.cues.indexOf('Smells of wheat') >= 0; }));
-ok('the fold still points at the bulk stage',
-  imported.stages.filter(function (st) { return st.type === 'repeat'; })[0].duringStageId ===
-  imported.stages.filter(function (st) { return st.type === 'bulk'; })[0].id);
-ok('but with fresh ids, so it is a separate process',
-  imported.stages[0].id !== original.stages[0].id);
-
-head('RELOAD — nothing is held in a running timer');
+head('NOTHING IS DERIVED FROM A RUNNING TIMER');
+var beforeReload = text();
 var saved = w.localStorage.getItem('bft.v1');
-/* Put a bake back in flight, then reload the page from storage alone. */
-var st9 = JSON.parse(saved);
-var proc9 = st9.processes[0];
-proc9.status = 'active'; st9.activeProcessId = proc9.id;
-saved = JSON.stringify(st9);
+var w2 = boot(saved, w.offset);
+var t2 = w2.document.getElementById('app').textContent;
+ok('a reload lands straight back in the running bulk', !!preshapeAt(t2));
+ok('with the same readings', (t2.match(/Edit/g) || []).length === (beforeReload.match(/Edit/g) || []).length);
+ok('and the same projection', preshapeAt(t2) === preshapeAt(beforeReload));
+ok('the bake survived the reload', JSON.parse(w2.localStorage.getItem('bft.v1')).bakes.length === 1);
 
-var dom2 = new JSDOM(fs.readFileSync(path.join(DIR, 'index.html'), 'utf8'), {
-  runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://example.test/'
+head('MENU AND SETTINGS');
+clickAct('menu');
+ok('the menu is a sheet', !!sheet());
+ok('alarm, notification and wake lock are all switchable',
+  !!act('t-sound', sheet()) && !!act('t-notify', sheet()) && !!act('t-wake', sheet()));
+ok('night has explicit day and night pins', $$('[data-act="night"]', sheet()).length === 3);
+click($('[data-act="night"][data-id="on"]', sheet()));
+ok('pinning night re-points the tokens and nothing else',
+  doc.documentElement.classList.contains('night'));
+click($('[data-act="night"][data-id="off"]', sheet()));
+ok('and day pins it back', !doc.documentElement.classList.contains('night'));
+setInput($('#lead', sheet()), '20');
+ok('the lead time is stored', stored().settings.leadMin === 20);
+clickAct('t-jar', sheet());
+ok('turning the jar off hides the rise button', !act('lograise'));
+ok('and offers a one-off instead', !!act('lograise-once', sheet()));
+
+head('FINISHING AND HISTORY');
+clickAct('finish', sheet());
+ok('finishing lands in history', /History/.test(text()));
+ok('with nothing active', stored().activeId === null);
+ok('the finished bulk is listed', /Comma bake/.test(text()));
+ok('finishing opens the card straight away', !act('openbake') && !!act('closebake'));
+ok('an opened bake shows its chart', !!$('.chartwrap svg'));
+var crumb = $('[data-act="crumb"]');
+setInput(crumb, 'Open even crumb.');
+ok('the crumb note is saved', stored().bakes[0].crumb === 'Open even crumb.');
+clickAct('csv');
+ok('readings export as CSV', downloads.some(function (d) { return /^bulk-ferment-.*\.csv$/.test(d.name); }));
+ok('there is no stage export left to offer', !act('csv-stages'));
+clickAct('back');
+ok('back with nothing running goes to the start form', !!$('#startform'));
+
+head('DELETING');
+clickAct('history');
+clickAct('openbake');
+clickAct('delbake');
+clickAct('yes', sheet());
+ok('a deleted bake is gone', stored().bakes.length === 0);
+ok('and history says so', /No finished bakes yet/.test(text()));
+
+head('MIGRATION FROM v2');
+var v2 = JSON.stringify({
+  version: 2, activeId: 'b1', activeProcessId: 'p1',
+  bakes: [{ id: 'b1', name: 'Old bulk', startedAt: Date.now() - 3600000, status: 'active',
+    readings: [{ id: 'r1', t: Date.now() - 3600000, temp: 24, rise: null, gapTemp: null }],
+    alerts: { lead: null, end: null }, crumb: '', finalCal: 1, useJar: true }],
+  templates: [{ id: 't1', name: 'Bruce\'s Loaf', stages: [] }],
+  processes: [{ id: 'p1', name: 'Old bake', events: [] }],
+  draft: { params: {} },
+  settings: { leadMin: 45, sound: false, notify: false, wakeLock: true, useJar: true, night: 'auto' }
 });
-var w2 = dom2.window;
-w2.matchMedia = function () { return { matches: false, addListener: function () {}, removeListener: function () {} }; };
-w2.navigator.vibrate = function () {};
-w2.AudioContext = w.AudioContext;
-w2.URL.createObjectURL = function () { return 'blob:x'; };
-w2.URL.revokeObjectURL = function () {};
-w2.localStorage.setItem('bft.v1', saved);
-['model.js', 'process.js', 'app.js'].forEach(function (f) { w2.eval(fs.readFileSync(path.join(DIR, f), 'utf8')); });
-var t2text = w2.document.getElementById('app').textContent;
-ok('a reload lands straight back in the running bake', /Timeline/.test(t2text));
-ok('the ticked-off stages are still ticked', /done \d\d:\d\d/.test(t2text));
-ok('the stage note survived', /Dough 20\.1/.test(t2text));
-ok('the templates survived', JSON.parse(w2.localStorage.getItem('bft.v1')).templates.length === 2);
+var w3 = boot(v2, 0);
+var s3 = JSON.parse(w3.localStorage.getItem('bft.v1'));
+ok('the old bulk ferment is untouched', s3.bakes.length === 1 && s3.bakes[0].readings.length === 1);
+ok('it is what you land on', /Old bulk/.test(w3.document.getElementById('app').textContent));
+ok('templates, processes and drafts are dropped',
+  !('templates' in s3) && !('processes' in s3) && !('draft' in s3) && !('activeProcessId' in s3));
+ok('settings carry over', s3.settings.leadMin === 45 && s3.settings.sound === false);
+ok('and the version is bumped once', s3.version === 3);
 
-head('SUMMARY');
-console.log((fail ? '  FAILED ' + fail + ' / ' + (pass + fail) + '\n   · ' + failures.join('\n   · ')
-  : '  All ' + pass + ' UI assertions passed.'));
-process.exit(fail ? 1 : 0);
+/* ------------------------------------------------------------------------
+ * Losing a bake is the failure this app is not allowed to have, so these
+ * drive the ways it actually happened rather than asserting on the helpers. */
+
+function goodState(name, readings) {
+  var t = Date.now() - 3600000;
+  return {
+    version: 3, activeId: 'k1', savedAt: t, bakes: [{
+      id: 'k1', name: name, startedAt: t, status: 'active',
+      readings: (readings || [{ id: 'x1', t: t, temp: 24, rise: null, gapTemp: null }]),
+      alerts: { lead: null, end: null }, crumb: '', finalCal: 1, useJar: true
+    }],
+    settings: { leadMin: 30, sound: true, notify: false, wakeLock: true, useJar: true, night: 'auto' }
+  };
+}
+
+head('A CORRUPT PAYLOAD IS NEVER TURNED INTO A BLANK ONE');
+var truncated = JSON.stringify(goodState('Half-written bake')).slice(0, 120);
+var w4 = boot(truncated, 0);
+ok('the app still starts', !!w4.document.querySelector('#startform'));
+ok('the unreadable payload is kept, not dropped',
+  w4.localStorage.getItem('bft.v1.corrupt') === truncated);
+ok('and it is NOT overwritten with a blank state',
+  w4.localStorage.getItem('bft.v1') === truncated,
+  String(w4.localStorage.getItem('bft.v1')).slice(0, 40));
+
+head('THE PREVIOUS COPY IS A REAL FALLBACK');
+var w5 = boot(null, 0);
+w5.localStorage.setItem('bft.v1', '{"bakes":[oops');
+w5.localStorage.setItem('bft.v1.prev', JSON.stringify(goodState('Rescued bake')));
+var w5b = boot(null, 0);
+w5b.localStorage.setItem('bft.v1', '{"bakes":[oops');
+w5b.localStorage.setItem('bft.v1.prev', JSON.stringify(goodState('Rescued bake')));
+['model.js', 'app.js'].forEach(function (f) { w5b.eval(fs.readFileSync(path.join(DIR, f), 'utf8')); });
+ok('a bake in the previous copy is recovered',
+  /Rescued bake/.test(w5b.document.getElementById('app').textContent));
+ok('and the app says it is running on a fallback',
+  /would not load/.test(w5b.document.getElementById('toast').textContent));
+
+head('EVERY SAVE LEAVES THE COPY IT REPLACED BEHIND');
+var w6 = boot(JSON.stringify(goodState('Generation one')), 0);
+var d6 = w6.document;
+d6.querySelector('[data-act="logtemp"]').dispatchEvent(new w6.MouseEvent('click', { bubbles: true }));
+var num6 = d6.querySelector('#sheet-root .sheet #numval');
+num6.value = '25';
+num6.dispatchEvent(new w6.Event('input', { bubbles: true }));
+d6.querySelector('#sheet-root .sheet [data-act="save"]').dispatchEvent(new w6.MouseEvent('click', { bubbles: true }));
+var cur6 = JSON.parse(w6.localStorage.getItem('bft.v1'));
+var prev6 = JSON.parse(w6.localStorage.getItem('bft.v1.prev'));
+ok('the new reading is in the current copy', cur6.bakes[0].readings.length === 2);
+ok('and the copy before it is still there', prev6 && prev6.bakes[0].readings.length === 1);
+
+head('A BROWSER THAT REFUSES TO SAVE SAYS SO');
+var w7 = boot(JSON.stringify(goodState('Doomed bake')), 0);
+var d7 = w7.document;
+/* Private Browsing on iOS throws here. It used to fail into a 2.6s toast and
+ * then behave as though everything was fine.
+ * Patched on Storage.prototype, not on the instance: jsdom's localStorage is a
+ * Proxy whose set trap stores a *key* called "setItem" rather than overriding
+ * the method, so an instance assignment silently does nothing. */
+w7.Storage.prototype.setItem = function () { throw new Error('QuotaExceededError'); };
+d7.querySelector('[data-act="logtemp"]').dispatchEvent(new w7.MouseEvent('click', { bubbles: true }));
+var num7 = d7.querySelector('#sheet-root .sheet #numval');
+num7.value = '26';
+num7.dispatchEvent(new w7.Event('input', { bubbles: true }));
+d7.querySelector('#sheet-root .sheet [data-act="save"]').dispatchEvent(new w7.MouseEvent('click', { bubbles: true }));
+ok('a failed write is reported, not swallowed',
+  /blocking storage/.test(d7.getElementById('toast').textContent),
+  JSON.stringify(d7.getElementById('toast').textContent));
+ok('and it stays on screen rather than fading with the toast',
+  /Not saving\./.test(d7.getElementById('app').textContent));
+ok('the warning is a way through to the backup',
+  d7.querySelector('.alarmbar').dataset.act === 'storage');
+
+/* On the live view the sheet is behind the ••• menu; on the start screen it is
+ * a button in its own right. Both routes matter, so both get walked. */
+function openStorage(win, docu) {
+  var el = docu.querySelector('[data-act="storage"]');
+  if (!el) {
+    docu.querySelector('[data-act="menu"]').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    el = docu.querySelector('#sheet-root .sheet [data-act="storage"]');
+  }
+  el.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  return docu.querySelector('#sheet-root .sheet');
+}
+
+head('BACKUP EXPORT');
+var w8 = boot(JSON.stringify(goodState('Exportable bake')), 0);
+var d8 = w8.document;
+var dl8 = [];
+var realClick8 = w8.HTMLElement.prototype.click;
+w8.HTMLElement.prototype.click = function () {
+  if (this.tagName === 'A' && this.download) { dl8.push(this.download); return; }
+  return realClick8.apply(this, arguments);
+};
+var sheet8 = openStorage(w8, d8);
+ok('the storage sheet says how many bakes are stored',
+  /1 bake stored in this browser/.test(sheet8.textContent), JSON.stringify(sheet8.textContent.slice(0, 80)));
+ok('and warns that bakes do not follow you to another URL',
+  /different URL/.test(sheet8.textContent));
+sheet8.querySelector('[data-act="backup-export"]').dispatchEvent(new w8.MouseEvent('click', { bubbles: true }));
+ok('a backup downloads as JSON', dl8.some(function (n) { return /^trackmyloaf-backup-.*\.json$/.test(n); }),
+  JSON.stringify(dl8));
+
+head('RESTORE MERGES — IT NEVER DELETES WHAT IS ALREADY HERE');
+/* Restoring onto a browser that already has bakes is the normal case after a
+ * URL change, so a restore that replaced state would be its own data loss. */
+var w9 = boot(JSON.stringify(goodState('Bake already here')), 0);
+var d9 = w9.document;
+var captured = null;
+var realCreate = d9.createElement.bind(d9);
+d9.createElement = function (tag) {
+  var el = realCreate(tag);
+  if (tag === 'input') captured = el;
+  return el;
+};
+var sheet9 = openStorage(w9, d9);
+sheet9.querySelector('[data-act="backup-import"]').dispatchEvent(new w9.MouseEvent('click', { bubbles: true }));
+
+var incoming = goodState('Bake from the old URL');
+incoming.bakes[0].id = 'k2';
+incoming.activeId = 'k2';
+var file = new w9.File([JSON.stringify({ app: 'trackmyloaf', version: 3, state: incoming })],
+  'backup.json', { type: 'application/json' });
+Object.defineProperty(captured, 'files', { value: [file] });
+captured.dispatchEvent(new w9.Event('change'));
+
+head('INSTALLABLE, AND OFFLINE BY DESIGN');
+var html = fs.readFileSync(path.join(DIR, 'index.html'), 'utf8');
+var manifest = JSON.parse(fs.readFileSync(path.join(DIR, 'manifest.webmanifest'), 'utf8'));
+var swSrc = fs.readFileSync(path.join(DIR, 'sw.js'), 'utf8');
+
+ok('the page links a manifest', /<link rel="manifest" href="manifest\.webmanifest">/.test(html));
+ok('and an apple-touch-icon, which is the one iOS actually reads',
+  /<link rel="apple-touch-icon" href="icon-180\.png">/.test(html));
+ok('the service worker is registered after load, never blocking boot',
+  /addEventListener\('load'[\s\S]*serviceWorker\.register\('sw\.js'\)/.test(html));
+ok('and a failed registration cannot break the app', /register\('sw\.js'\)\.catch\(/.test(html));
+
+ok('the manifest has what a browser needs to offer an install',
+  manifest.name && manifest.short_name && manifest.start_url &&
+  manifest.display === 'standalone' && manifest.icons.length >= 2);
+ok('including both icon sizes Chrome requires',
+  ['192x192', '512x512'].every(function (s) {
+    return manifest.icons.some(function (i) { return i.sizes === s; });
+  }));
+ok('and a maskable icon, so Android does not crop the loaf',
+  manifest.icons.some(function (i) { return i.purpose === 'maskable'; }));
+ok('every icon the manifest names actually exists',
+  manifest.icons.every(function (i) { return fs.existsSync(path.join(DIR, i.src)); }),
+  manifest.icons.map(function (i) { return i.src; }).join(' '));
+ok('the manifest theme matches the light-theme page background',
+  manifest.background_color === '#F7F1E8' && manifest.theme_color === '#F7F1E8');
+
+/* The same trap CLAUDE.md flags for <script> tags: add a file to the site and
+ * forget the other place that lists it, and the app breaks — here, offline. */
+var referenced = [];
+html.replace(/(?:src|href)="([^"]+)"/g, function (m, u) {
+  if (!/^(https?:|data:|#)/.test(u)) referenced.push(u);
+  return m;
+});
+var missing = referenced.filter(function (u) {
+  return u !== 'sw.js' && swSrc.indexOf("'" + u + "'") < 0;
+});
+ok('the worker precaches every local file index.html references',
+  missing.length === 0, 'not precached: ' + missing.join(' '));
+ok('every precached path exists on disk',
+  (/var SHELL = \[([\s\S]*?)\];/.exec(swSrc)[1].match(/'([^']+)'/g) || [])
+    .map(function (s) { return s.slice(1, -1); })
+    .filter(function (p) { return p !== './'; })
+    .every(function (p) { return fs.existsSync(path.join(DIR, p)); }));
+
+/* Network-first is the whole reason a push can stay a deploy. Verified for
+ * real in Chromium; asserted here so it cannot be quietly inverted. */
+ok('the worker goes to the network first and falls back to the cache',
+  /fromNetwork\(request\)\['catch'\]\(function \(\) \{[\s\S]*caches\.match/.test(swSrc));
+ok('a new worker takes over straight away rather than waiting for tabs to close',
+  /skipWaiting\(\)/.test(swSrc) && /clients\.claim\(\)/.test(swSrc));
+ok('and old caches are dropped on activate', /caches\['delete'\]\(k\)/.test(swSrc));
+
+head('THE HOME SCREEN IS THE FIX FOR iOS EVICTION, SO THE APP SAYS SO');
+var wA = boot(JSON.stringify(goodState('Eviction bake')), 0);
+var dA = wA.document;
+Object.defineProperty(wA.navigator, 'userAgent',
+  { value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15', configurable: true });
+var sheetA = openStorage(wA, dA);
+ok('the storage sheet explains the seven-day wipe',
+  /seven days/.test(sheetA.textContent), JSON.stringify(sheetA.textContent.slice(-260)));
+ok('and tells you the taps that fix it',
+  /Add to Home Screen/.test(sheetA.textContent));
+ok('it does not offer a button iOS will never honour',
+  !sheetA.querySelector('[data-act="install"]'));
+
+function finish() {
+  head('SUMMARY');
+  console.log((fail ? '  FAILED ' + fail + ' / ' + (pass + fail) + '\n   · ' + failures.join('\n   · ')
+    : '  All ' + pass + ' UI assertions passed.'));
+  process.exit(fail ? 1 : 0);
+}
+
+/* FileReader is async, so the last assertions and the summary run from here. */
+setTimeout(function () {
+  var s9 = JSON.parse(w9.localStorage.getItem('bft.v1'));
+  ok('the restored bake is added', s9.bakes.filter(function (b) { return b.id === 'k2'; }).length === 1);
+  ok('and the bake already here is still here',
+    s9.bakes.filter(function (b) { return b.id === 'k1'; }).length === 1, JSON.stringify(s9.bakes.map(function (b) { return b.name; })));
+  ok('the running bake is not hijacked by the import', s9.activeId === 'k1');
+  syncTests();
+}, 150);
+
+function syncTests() {
+  head('SYNC IS OFF UNTIL YOU TURN IT ON');
+  var wS = boot(JSON.stringify(goodState('Private bake')), 0);
+  var dS = wS.document;
+  var calls = [];
+  wS.fetch = function (url, opts) {
+    calls.push({ url: url, body: JSON.parse(opts.body) });
+    return Promise.resolve({
+      ok: true,
+      json: function () {
+        return Promise.resolve({ state: {
+          bakes: [goodState('Private bake').bakes[0], (function () {
+            var o = goodState('From the other phone').bakes[0]; o.id = 'other'; return o;
+          })()],
+          deleted: {}, activeId: 'k1'
+        } });
+      }
+    });
+  };
+
+  ok('no sync code is stored by default', wS.localStorage.getItem('bft.sync') === null);
+
+  /* Log a reading and let the debounce elapse: with sync off, nothing at all
+   * should leave the phone. */
+  dS.querySelector('[data-act="logtemp"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));
+  var nS = dS.querySelector('#sheet-root .sheet #numval');
+  nS.value = '25';
+  nS.dispatchEvent(new wS.Event('input', { bubbles: true }));
+  dS.querySelector('#sheet-root .sheet [data-act="save"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));
+
+  setTimeout(function () {
+    ok('and nothing is sent anywhere with sync off', calls.length === 0,
+      JSON.stringify(calls.map(function (c) { return c.url; })));
+
+    head('TURNING SYNC ON');
+    var sheetS = openStorage(wS, dS);
+    ok('the storage sheet offers to set it up', !!sheetS.querySelector('[data-act="sync"]'));
+    sheetS.querySelector('[data-act="sync"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));
+    var syncSheetEl = dS.querySelector('#sheet-root .sheet');
+    ok('the sync sheet says who can read the bakes',
+      /anyone who knows it can read your bakes/i.test(syncSheetEl.textContent));
+
+    syncSheetEl.querySelector('#synccode').value = 'short';
+    syncSheetEl.querySelector('[data-act="sync-save"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));
+    ok('a short code is refused', wS.localStorage.getItem('bft.sync') === null &&
+      /At least 8/.test(dS.querySelector('#sheeterr').textContent));
+
+    syncSheetEl.querySelector('#synccode').value = 'two-loaves-one-oven';
+    syncSheetEl.querySelector('[data-act="sync-save"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));
+    ok('a long enough code is stored',
+      JSON.parse(wS.localStorage.getItem('bft.sync')).code === 'two-loaves-one-oven');
+
+    setTimeout(function () {
+      ok('and it pushes to the sync endpoint', calls.length >= 1 && calls[0].url === 'api/sync',
+        JSON.stringify(calls.map(function (c) { return c.url; })));
+      ok('sending the code and the bakes', calls[0].body.code === 'two-loaves-one-oven' &&
+        calls[0].body.state.bakes.length === 1);
+      var sS = JSON.parse(wS.localStorage.getItem('bft.v1'));
+      ok('the other phone\'s bake arrives',
+        sS.bakes.filter(function (b) { return b.id === 'other'; }).length === 1,
+        JSON.stringify(sS.bakes.map(function (b) { return b.id; })));
+      ok('and this phone\'s own bake is still here',
+        sS.bakes.filter(function (b) { return b.id === 'k1'; }).length === 1);
+
+      var before = calls.length;
+      setTimeout(function () {
+        ok('applying a merge does not bounce another push straight back',
+          calls.length === before, before + ' → ' + calls.length);
+
+        head('DELETING LEAVES A TOMBSTONE, SO IT STAYS DELETED');
+        var wD = boot(JSON.stringify(goodState('Doomed')), 0);
+        var dD = wD.document;
+        dD.querySelector('[data-act="menu"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
+        dD.querySelector('#sheet-root .sheet [data-act="finish"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
+        dD.querySelector('[data-act="delbake"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
+        dD.querySelector('#sheet-root .sheet [data-act="yes"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
+        var sD = JSON.parse(wD.localStorage.getItem('bft.v1'));
+        ok('the bake is gone', sD.bakes.length === 0);
+        ok('and a tombstone records it', !!sD.deleted && !!sD.deleted.k1,
+          JSON.stringify(sD.deleted));
+        finish();
+      }, 60);
+    }, 30);
+  }, 4200);
+}
