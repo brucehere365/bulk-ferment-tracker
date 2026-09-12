@@ -12,17 +12,27 @@ is no build step, no CI, and no `wrangler.toml` — the repo root is served as-i
 
 Remote: `https://github.com/brucehere365/bulk-ferment-tracker.git`
 
-⚠️ **The connection is currently Cloudflare _Workers_ Builds, not Pages**, and
-its check fails on every commit — instantly, with `started_at == completed_at`,
-because Workers Builds expects a `wrangler` config this repo does not and should
-not have. It has failed the same way since at least August, on unrelated diffs.
-The site is served from a Workers URL rather than `*.pages.dev`.
+**The repo is connected as a Cloudflare _Pages_ project**, added September 2026.
+Pages is what serves the site and what runs `functions/`; its check is green and
+it publishes a preview URL per branch.
 
-Do not "fix" that red check by adding a `wrangler.toml`. The fix is a dashboard
-change — connect the repo as a **Pages** project and disconnect Workers Builds.
-When that happens, **the origin changes**, and `localStorage` does not follow an
-origin: every bake on the old URL becomes invisible. Export a JSON backup from
-the old address first and restore it on the new one. See the storage section.
+⚠️ **Workers Builds was never disconnected, so both integrations are live** and
+every commit still gets one red `Workers Builds: bulk-ferment-tracker` check
+beside the green `Cloudflare Pages` one. It fails instantly — PR #3 recorded
+`started_at == completed_at == 05:55:30`, PR #2 the same at `08:11:37` on a
+wholly unrelated diff — because Workers Builds wants a `wrangler` config this
+repo does not and should not have.
+
+**That red check is not yours. Do not try to fix it in the repo**, and above all
+do not add a `wrangler.toml`: it would make Workers Builds pass by turning the
+project into something Pages should not serve. The fix is one dashboard action —
+disconnect Workers Builds from the repo — and until someone does it, judge CI by
+the Pages check alone.
+
+Moving to Pages changed the origin, and `localStorage` does not follow an origin,
+so bakes left on the old Workers URL are not visible on the new one. They are not
+gone: export a JSON backup from the old address and restore it here. See the
+storage section.
 
 Consequences worth remembering:
 
@@ -111,20 +121,31 @@ state would be its own data loss.
 server-side code in the project. It exists because a bake that lives in one
 browser dies with that browser.
 
-**It is off until two phones are given the same kitchen code**, and everything
-above works untouched with it off. Sync only ever *adds* a copy somewhere else;
-it must never become the reason a bake is lost. If it is unconfigured the
-endpoint returns 503 and the app carries on storing locally, silently.
+**It is off until a code is entered**, and everything above works untouched with
+it off. Sync only ever *adds* a copy somewhere else; it must never become the
+reason a bake is lost. If it is unconfigured the endpoint returns 503 and the
+app carries on storing locally, silently.
 
+* **A code is one baker, not one kitchen.** Every device that types the same
+  code shares one set of bakes; a different code is a separate set the server
+  has no path to merge with it, because the KV key *is* the hash of the code.
+  Two people therefore get a code each — that is how accounts are handed out
+  here, and it is why there is no registration to lock down.
+  **Never suggest sharing one code between two bakers.** They would also share
+  `activeId`, so one of them starting a bulk moves the other's live view onto
+  it. `syncSheet()` warns about this and `ui.tests.js` asserts the warning.
 * **Setup is manual and one-off**, in the Cloudflare dashboard: create a KV
   namespace, bind it to the Pages project as `BAKES`. The setup steps are in a
-  comment at the top of the function. It needs the repo to be a **Pages**
-  project — `functions/` does nothing on Workers Builds.
+  comment at the top of the function.
 * **The code is a shared secret, not authentication.** Anyone who knows it can
   read those bakes, and the sync sheet says exactly that. Minimum 8 characters.
-  The code is never stored: the KV key is `SHA-256(salt + ' ' + code)`, so a
-  dump of the namespace does not hand over the codes. For anything stronger,
-  put Cloudflare Access in front of the whole site.
+  The code is never stored: the KV key is `SHA-256(salt + '\x00' + code)`, so a
+  dump of the namespace does not hand over the codes. That separator is written
+  as an escape on purpose — a raw NUL byte there made git treat `sync.js` as
+  binary and put one editor's normalisation between every baker and their
+  bakes. For anything stronger,
+  put Cloudflare Access in front of the whole site — that, not a rewrite onto
+  Supabase or any other auth provider, is the next step up if one is wanted.
 * **POST only.** A GET would put the code in a query string and from there into
   browser history and every log in between.
 * **The server merges; it does not last-write-wins.** Union of both sides, and
@@ -238,8 +259,8 @@ legitimate pinch-zoom. `touch-action` is the fix.
 ## Tests
 
     node tests.js        # fermentation model — 56 assertions
-    node sync.tests.js   # the real Pages Function against a fake KV — 22
-    node ui.tests.js     # real DOM driven by clicks — 115 (needs: npm i jsdom)
+    node sync.tests.js   # the real Pages Function against a fake KV — 25
+    node ui.tests.js     # real DOM driven by clicks — 116 (needs: npm i jsdom)
 
 Run all three before pushing, since a push deploys.
 
