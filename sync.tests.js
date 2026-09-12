@@ -96,14 +96,29 @@ function post(mod, env, body, raw) {
     body.state.activeId === null || body.state.bakes.some(function (x) { return x.id === body.state.activeId; }),
     String(body.state.activeId));
 
-  head('KITCHEN CODES ARE ISOLATED');
-  res = await post(mod, env, { code: 'a-completely-different-code', state: { bakes: [bake('z', 'Someone else', 1)] } });
+  head('ONE CODE PER BAKER, AND THE CODES CANNOT REACH EACH OTHER');
+  /* The isolation the app promises when it tells two people to take a code
+   * each. A different code is a different KV key, so there is no merge path
+   * between them at all — including for activeId, which is the one field that
+   * would otherwise let someone else's bulk take over your live view. */
+  res = await post(mod, env, {
+    code: 'a-completely-different-code',
+    state: { bakes: [bake('z', 'Someone else', 1)], activeId: 'z' }
+  });
   body = await res.json();
   ok('another code sees only its own bakes',
     body.state.bakes.length === 1 && body.state.bakes[0].id === 'z');
-  res = await post(mod, env, { code: CODE, state: { bakes: [] } });
+
+  res = await post(mod, env, { code: CODE, state: { bakes: [], activeId: 'a' } });
   body = await res.json();
   ok('and cannot see into the first', body.state.bakes.every(function (x) { return x.id !== 'z'; }));
+  ok('their running bulk does not become yours', body.state.activeId === 'a', String(body.state.activeId));
+
+  res = await post(mod, env, { code: 'a-completely-different-code', state: { bakes: [] } });
+  body = await res.json();
+  ok('and yours does not become theirs', body.state.activeId === 'z', String(body.state.activeId));
+  ok('neither side lost its own bake to the other',
+    body.state.bakes.length === 1 && body.state.bakes[0].id === 'z');
 
   head('THE CODE ITSELF IS NEVER STORED');
   var keys = [].concat.apply([], Array.from(env.BAKES._map.keys()));

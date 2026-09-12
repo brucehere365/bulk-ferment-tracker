@@ -957,13 +957,16 @@
   }
 
   // --------------------------------------------------------------- sync
-  /* Optional, off until two phones are given the same kitchen code. Everything
-   * above still works untouched with it off — this only ever adds a copy
-   * somewhere else, and can never be the reason a bake is lost.
+  /* Optional, off until a code is entered. Everything above still works
+   * untouched with it off — this only ever adds a copy somewhere else, and can
+   * never be the reason a bake is lost.
    *
-   * The code is the only credential, so it is deliberately not treated as a
-   * password: it is kept in its own storage key, never put in a URL, and the
-   * sheet says plainly that whoever knows it can read the bakes. */
+   * A code is one baker's private bucket, not a shared room. Every device that
+   * types the same code shares one set of bakes; a different code is a wholly
+   * separate set the server never merges with it. Two people therefore get two
+   * codes — one code between them would also share `activeId`, so starting a
+   * bulk on one phone would move the other phone's live view onto it. The copy
+   * in syncSheet() says so, because the mistake is easy and silent. */
   var SYNC_KEY = 'bft.sync';
   var SYNC_MIN = 8;
   var syncState = { code: null, at: 0, error: null, busy: false };
@@ -1020,9 +1023,9 @@
       if (r.added || r.updated || r.removed) {
         render();
         if (r.added || r.updated) {
-          toast('Synced — ' + (r.added ? r.added + ' new' : r.updated + ' updated') + ' from the other phone.');
+          toast('Synced — ' + (r.added ? r.added + ' new' : r.updated + ' updated') + ' from your other device.');
         }
-      } else if (loud) { toast('Synced. Both phones already match.'); }
+      } else if (loud) { toast('Synced. Everything already matches.'); }
     })['catch'](function (e) {
       syncState.busy = false;
       /* Offline is the normal case in a kitchen, not an error worth shouting
@@ -1035,16 +1038,17 @@
   function syncSheet() {
     var on = !!syncState.code;
     openSheet(
-      '<h2>Sync with one other phone</h2>' +
+      '<h2>Your bakes, on any device</h2>' +
       '<p class="hint">' + (on
-        ? 'On. Bakes are copied to Cloudflare under your kitchen code and merged with the other phone\'s.'
+        ? 'On. Your bakes are copied to Cloudflare under your own code, and every device you type it into sees them.'
         : 'Off. Bakes stay on this phone only.') + '</p>' +
-      '<p class="hint">Both phones type the same code. It is the only thing protecting the data — ' +
+      '<p class="hint">Pick a code only you use. Someone baking with a different code has their own ' +
+      'separate set of bakes that never touches yours. It is the only thing protecting the data — ' +
       'anyone who knows it can read your bakes — so make it long and unguessable, and do not ' +
       'reuse a password. At least ' + SYNC_MIN + ' characters.</p>' +
-      '<label class="field">Kitchen code' +
+      '<label class="field">Your private code' +
       '<input id="synccode" type="text" inputmode="text" autocomplete="off" autocapitalize="none" ' +
-      'spellcheck="false" value="' + esc(syncState.code || '') + '" placeholder="two-loaves-one-oven"></label>' +
+      'spellcheck="false" value="' + esc(syncState.code || '') + '" placeholder="your-own-long-phrase"></label>' +
       /* err() writes here, so it has to exist before anything goes wrong. */
       '<div class="err" id="sheeterr">' + esc(syncState.error || '') + '</div>' +
       (on && syncState.at ? '<p class="note">Last synced ' + clock(syncState.at) + dayTag(syncState.at) + '.</p>' : '') +
@@ -1055,7 +1059,9 @@
         '<div class="spacer"></div><button class="btn small danger" data-act="sync-off">Turn sync off</button>' : '') +
       '<div class="spacer"></div>' +
       '<p class="note">Merging is the same as a restore: it adds what is missing and never deletes ' +
-      'what is here. Deleting a bake deletes it on both.</p>',
+      'what is here. Deleting a bake deletes it on every device using this code.</p>' +
+      '<p class="note">Baking alongside someone else? Give them their own code rather than this one. ' +
+      'Two people on one code share a single set of bakes, including which one is running now.</p>',
       function (sheet) {
         sheet.addEventListener('click', function (e) {
           var a = e.target.closest('[data-act]');
@@ -1135,7 +1141,7 @@
       '<p class="note">Restoring merges — it adds what is missing and never deletes what is here.</p>' +
       '<div class="section-title">Sync</div>' +
       '<p class="hint">' + (syncState.code
-        ? 'On. Your bakes are shared with the other phone using the same kitchen code.'
+        ? 'On. Your bakes are kept under your private code and follow you to any device you type it into.'
         : 'Off. A backup file is a copy you have to remember to take; sync is one you do not.') + '</p>' +
       '<div class="spacer"></div>' +
       '<button class="btn ghost" data-act="sync">' + (syncState.code ? 'Sync settings' : 'Set up sync') + '</button>' +

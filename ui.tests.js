@@ -510,6 +510,11 @@ function syncTests() {
     var syncSheetEl = dS.querySelector('#sheet-root .sheet');
     ok('the sync sheet says who can read the bakes',
       /anyone who knows it can read your bakes/i.test(syncSheetEl.textContent));
+    /* Sharing one code between two bakers also shares activeId, so the other
+     * person starting a bulk moves your live view onto their dough. The sheet
+     * has to say so — the mistake is easy and nothing about it looks wrong. */
+    ok('and tells a second baker to take their own code',
+      /own code/i.test(syncSheetEl.textContent));
 
     syncSheetEl.querySelector('#synccode').value = 'short';
     syncSheetEl.querySelector('[data-act="sync-save"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));

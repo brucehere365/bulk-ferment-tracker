@@ -112,8 +112,15 @@ The bulk never auto-completes. The app can say ready. It cannot say done.
 
 ## Sync (optional)
 
-Off unless you turn it on. Two phones type the same kitchen code and their
-bakes are merged through `functions/api/sync.js`, a Cloudflare Pages Function.
+Off unless you turn it on. You pick a private code, and every device you type it
+into shares one set of bakes through `functions/api/sync.js`, a Cloudflare Pages
+Function.
+
+One code is one baker. Someone else baking on a different code gets a wholly
+separate set: the KV key is the hash of the code, so there is no path between
+them. That is how you hand out accounts without running a signup form. Do not
+share one code between two people — you would also share which bake is running
+now, and their dough would take over your live view.
 
 It needs a one-off setup in the Cloudflare dashboard: create a KV namespace and
 bind it to the Pages project as `BAKES`. Steps are in a comment at the top of
@@ -121,13 +128,13 @@ that file. Until then the endpoint returns 503 and the app just stores locally.
 
 The code is a shared secret, not a login — anyone who knows it can read those
 bakes — so make it long. It is never stored; the key is a salted SHA-256 of it.
-Merging is the union of both phones, the copy with more readings wins, and
+Merging is the union of both sides, the copy with more readings wins, and
 deletions travel as tombstones so a deleted bake does not come back.
 
 ## Tests
 
     node tests.js        # the fermentation model — 56 assertions
-    node sync.tests.js   # the sync endpoint against a fake KV — 22
+    node sync.tests.js   # the sync endpoint against a fake KV — 25
     node ui.tests.js     # the real DOM, driven by clicks (needs: npm i jsdom)
 
 `ui.tests.js` clicks real buttons, reads real `localStorage`, reloads the page
