@@ -435,12 +435,12 @@
       '</div>' +
       chartSVG(bake.readings, now) +
       (st.gapPending ? '<p class="note center">No reading for ' + dur(st.sinceLastMs) + ' — the next entry will ask what happened in between.</p>' : '') +
-      /* Invariant 4: the bulk never ends itself. The tap that ends it is the
-       * primary button and the only one, because deciding the dough is done is
-       * the whole job — logging another temperature is just refining the guess. */
+      /* One primary button, and it is the one you actually press: you log a
+       * temperature many times across a bulk and end it once. Ending it is
+       * still an explicit tap (invariant 4) and still confirms first. */
       '<div class="actions" style="grid-template-columns:1fr">' +
-      '<button class="btn primary" data-act="finish">Preshape now — finish bulk</button>' +
-      '<button class="btn" data-act="logtemp">Log temperature</button>' +
+      '<button class="btn primary" data-act="logtemp">Log temperature</button>' +
+      '<button class="btn" data-act="finish">End bulk</button>' +
       '</div>' +
       readingsList(bake) +
       '<div class="cues">' +
@@ -1115,10 +1115,10 @@
       case 'edit': editReading(id); break;
       case 'menu': closeSheet(); settingsSheet(); break;
       case 'finish':
-        /* Invariant 4: only ever an explicit tap, and the primary button on the
-         * live view is a big one, so it asks before it ends the bulk. */
-        confirmSheet('Finish this bulk?', 'The clock stops and you go back to the start screen.',
-          'Finish', function () { finishBake(false); });
+        /* Invariant 4: only ever an explicit tap, and it asks first — ending a
+         * bulk by mistake is the one thing on this screen you cannot undo. */
+        confirmSheet('End this bulk?', 'The clock stops and you go back to the start screen.',
+          'End bulk', function () { finishBake(false); });
         break;
     }
   }

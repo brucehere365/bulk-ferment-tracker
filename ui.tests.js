@@ -161,9 +161,12 @@ ok('but there is nothing to log a jar reading with',
   !act('lograise') && !act('resetcal') && !/aliquot/i.test(text()));
 ok('the cue list is instructions, with nothing to tick',
   /Domed, not flat/.test(text()) && $$('.cues input').length === 0);
-/* Invariant 6: one primary button, and it is the one that ends the bulk. */
-ok('the primary button is the one that ends the bulk',
-  $$('#app .btn.primary').length === 1 && act('finish').classList.contains('primary'));
+/* One primary button, and it is the one actually pressed: a temperature goes in
+ * many times across a bulk, the bulk ends once. */
+ok('there is exactly one primary button', $$('#app .btn.primary').length === 1);
+ok('and it is Log temperature, not the one that ends the bulk',
+  act('logtemp').classList.contains('primary') && !act('finish').classList.contains('primary'));
+ok('ending the bulk is still on screen and still says so', /End bulk/.test(act('finish').textContent));
 ok('there is no nav left, because there is nowhere to go', !$('.navpill'));
 
 head('LOGGING A TEMPERATURE THROUGH THE KEYPAD');
@@ -246,7 +249,7 @@ ok('and tapping outside closes the sheet', !sheet());
 
 head('FINISHING');
 clickAct('finish');
-ok('the primary button asks before it ends the bulk', /Finish this bulk/.test(sheet().textContent));
+ok('ending the bulk asks first', /End this bulk/.test(sheet().textContent));
 clickAct('yes', sheet());
 ok('finishing goes back to the start form', !!$('#startform'));
 ok('with nothing active', stored().activeId === null);

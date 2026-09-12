@@ -107,9 +107,10 @@ from a running timer, so a backgrounded tab or a slept phone changes nothing.
 Fixing a reading replays the whole bake from the first one rather than patching
 it.
 
-Finishing is always an explicit tap, and it is the only primary button on the
-live view. A finished bake is kept rather than deleted — a mis-tap must not be
-what destroys one — there is simply nowhere in the app to look at it.
+Log temperature is the one primary button on the live view; ending the bulk sits
+beside it as an ordinary button and confirms first. A bulk never ends itself. A
+finished bake is kept rather than deleted — a mis-tap must not be what destroys
+one — there is simply nowhere in the app to look at it.
 
 Temperatures are typed on a big keypad, or on the phone's own keyboard. Both
 `23.5` and `23,5` mean the same thing — every number the app reads goes through

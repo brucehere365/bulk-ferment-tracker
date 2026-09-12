@@ -236,9 +236,13 @@ reads a `rise` if one is there, so a v3 install loses nothing by upgrading.
    would redraw itself, the progress bar would sweep from zero. `render()` adds `enter` only when the view
    actually changes. Anything that animates on arrival goes under that selector.
 6. **Cue lists are instructions, not a checklist.** Small print you read before
-   you decide. Nothing to tick — and the tap that ends the bulk is the primary
-   button, the only `.btn.primary` on the live view. `ui.tests.js` asserts both
-   the count and which button carries it.
+   you decide. Nothing to tick.
+7. **One primary button on the live view, and it is Log temperature.** An
+   earlier version made *ending the bulk* primary; the owner changed it, and the
+   reasoning holds — a temperature goes in many times across a bulk, the bulk
+   ends once, so the big button should be the one actually pressed. Ending it is
+   an ordinary button that confirms first. `ui.tests.js` asserts the count and
+   which button carries it, so do not swap them back on aesthetic grounds.
 
 ## Numbers the user types
 
@@ -295,7 +299,7 @@ legitimate pinch-zoom. `touch-action` is the fix.
 
     node tests.js        # fermentation model — 56 assertions
     node sync.tests.js   # the real Pages Function against a fake KV — 25
-    node ui.tests.js     # real DOM driven by clicks — 117 (needs: npm i jsdom)
+    node ui.tests.js     # real DOM driven by clicks — 119 (needs: npm i jsdom)
 
 Run all three before pushing, since a push deploys.
 
