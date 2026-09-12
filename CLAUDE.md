@@ -108,7 +108,7 @@ It has happened twice in real use, so the rules here are not negotiable.
 None of that crosses an origin. `localStorage` is per-origin, so a new URL, a
 different browser, or an iOS Home Screen icon beside a Safari tab each hold a
 separate, empty app. **The JSON backup is the only thing that moves between
-them**, which is why `storageSheet()` is reachable from the start screen — the
+them**, which is why `settingsSheet()` is reachable from the start screen — the
 screen you are on when a bake has gone missing — and not only from the menu.
 
 Restore **merges and never deletes**: unknown bakes are added, and a bake
@@ -133,10 +133,19 @@ app carries on storing locally, silently.
   here, and it is why there is no registration to lock down.
   **Never suggest sharing one code between two bakers.** They would also share
   `activeId`, so one of them starting a bulk moves the other's live view onto
-  it. `syncSheet()` warns about this and `ui.tests.js` asserts the warning.
+  it. `settingsSheet()` warns about this and `ui.tests.js` asserts the warning.
 * **Setup is manual and one-off**, in the Cloudflare dashboard: create a KV
   namespace, bind it to the Pages project as `BAKES`. The setup steps are in a
-  comment at the top of the function.
+  comment at the top of the function. **Pages keeps Production and Preview
+  bindings separately**, so a namespace bound only to Production leaves every
+  `*.pages.dev` branch preview 503ing while production works — bind both, or
+  expect sync to look broken exactly where you test it.
+* **Never tell someone sync is working because the app accepted their code.**
+  It accepts any code of 8 characters offline. Only a completed round trip
+  proves anything, which is why `syncState.at` — not `syncState.code` — is what
+  `settingsSheet()` reads before it says a word about bakes being saved off the
+  phone, and why turning sync on toasts "Checking the server…" rather than a
+  success it has not yet earned. `ui.tests.js` asserts that distinction.
 * **The code is a shared secret, not authentication.** Anyone who knows it can
   read those bakes, and the sync sheet says exactly that. Minimum 8 characters.
   The code is never stored: the KV key is `SHA-256(salt + '\x00' + code)`, so a
@@ -163,47 +172,86 @@ app carries on storing locally, silently.
 
 ## The app is one thing
 
-There are three screens and no mode picker:
+Two screens, one sheet, and no nav — which screen you get is not a choice
+anyone makes:
 
-* `view = 'start'` — the form that begins a bulk. Where you land with nothing
-  running.
+* `view = 'start'` — one temperature field and **Start bulk**. Where you land
+  with nothing running.
 * `view = 'live'` — the running bulk. Where you land if there is one.
-* `view = 'history'` — finished bakes, their charts and the CSV export.
+* `settingsSheet()` — the code, the alarm, the backup. Reachable in one tap
+  from the `•••` on **both** screens, because the screen you are on when a bake
+  has gone missing is the screen the backup has to be reachable from.
+* `firstRunSheet()` — asked once on a genuinely fresh install (`bootedEmpty`, no
+  code, never answered, no bakes). Handing someone a link and a code only works
+  if the app they open asks for the code. It is skippable in one tap and the
+  answer is remembered in `bft.sync` as `asked`, which outlives a cleared code:
+  turning sync off is an answer, and a modal that returns every launch until you
+  give in is nagging, not asking. Never make it a gate in front of starting a
+  bulk.
 
 **v3 removed recipe templates, the stage-by-stage full bake, and the forward and
-reverse planners**, along with `process.js` and `process.tests.js`. That was a
-deliberate simplification, not an accident — do not reintroduce a recipe store,
-a stage runner or a second chart because a stray reference to one survives
-somewhere. The removed code is in the git history if it is ever wanted back.
+reverse planners**, along with `process.js` and `process.tests.js`.
+
+**v4 removed the rest of the second app**: the aliquot jar *input* side (rise
+logging, the calibration factor on screen, the one-off rise, the reset), the
+History screen and its bake cards, the CSV export, the crumb note, the nav pill,
+the screen-wake toggle, the Day/Night pins, the configurable lead-time alert,
+the bake name and notes fields, and the separate `syncSheet()` and
+`storageSheet()`.
+
+**Rise % and the chart are not part of that and must stay.** The first cut took
+them out with the jar and it was wrong: `st.expectedRise` and `st.target` come
+from temperature and progress alone — no jar, nothing to log — and they are what
+the baker holds the bowl up against. The chart has no controls either. What made
+this app confusing was *things to decide and tap*, not things to read. Weigh any
+future cut on that line: information stays, decisions go.
+
+Both were deliberate, and the second was asked for in those words: *"it feels
+way too complex and I don't even understand what you've built."* **Do not
+reintroduce any of it because a stray reference survives somewhere.** The
+removed code is all in the git history.
+
+What is left is the thing that was asked for: start a loaf, see when it will be
+ready, get pinged, do not lose it, one code each. Weigh anything new against
+that sentence.
+
 `load()` drops the old `templates`, `processes`, `activeProcessId` and `draft`
-keys on read; the bulk ferments a v2 install had are ordinary bakes and survive
-untouched.
+keys on read. Nothing v4 removed is dropped from stored state — old bakes keep
+their `rise`, `crumb`, `notes` and `useJar` fields untouched and the model still
+reads a `rise` if one is there, so a v3 install loses nothing by upgrading.
 
 ## Invariants — do not break these
 
 1. **`model.js` is the fermentation model and nothing else may predict a bulk.**
    Bulk length is always `BFModel.hoursAt(T)` = `1 / r(T)` from the fitted curve.
    Never hardcode a duration, and never write "doubled" as a target — target
-   rise comes from `targetRisePct(T)`, which falls as temperature rises.
+   rise comes from `targetRisePct(T)`, which falls as temperature rises. The
+   calibration factor is still in the model and still correct; with no rise
+   readings to learn from it simply stays at 1.
 2. **Nothing is derived from a running timer.** Every number on screen is
    recomputed from stored timestamps plus `Date.now()`. A backgrounded tab, a
    slept phone or a reload must change nothing. `ui.tests.js` asserts this with
    a real page reload and with a `Date.now` it pushes hours forward.
 3. **Edits never patch state — they replay it.** `BFModel.replay()` recomputes
-   from the first reading every time. Calibration is causal: a factor learned at
-   reading *k* only affects intervals after *k*.
+   from the first reading every time. Fixing a mistyped temperature is not
+   cosmetic: 42 where you meant 24 throws the whole projection out, which is why
+   the Fix button survived a cut that took almost everything else with it.
 4. **The bulk never auto-completes.** It waits for an explicit tap. The app can
    say *ready*; it cannot say *done*. This is a product rule, not an
    implementation detail.
 5. **Entrance animations are gated behind `#app.enter`.** The live view
-   re-renders once a second from stored timestamps (invariant 2), so any
-   unguarded entrance animation restarts every second — the hero would pulse,
-   the chart would redraw itself, the progress bar would sweep from zero.
-   `render()` adds `enter` only when the view actually changes. Anything that
-   animates on arrival goes under that selector.
+   re-renders from stored timestamps on a tick (invariant 2), so any unguarded
+   entrance animation restarts every time — the hero would pulse, the chart
+   would redraw itself, the progress bar would sweep from zero. `render()` adds `enter` only when the view
+   actually changes. Anything that animates on arrival goes under that selector.
 6. **Cue lists are instructions, not a checklist.** Small print you read before
-   you decide. Nothing to tick — the tap that ends the bulk is the primary
-   button, and there is only ever one of those.
+   you decide. Nothing to tick.
+7. **One primary button on the live view, and it is Log temperature.** An
+   earlier version made *ending the bulk* primary; the owner changed it, and the
+   reasoning holds — a temperature goes in many times across a bulk, the bulk
+   ends once, so the big button should be the one actually pressed. Ending it is
+   an ordinary button that confirms first. `ui.tests.js` asserts the count and
+   which button carries it, so do not swap them back on aesthetic grounds.
 
 ## Numbers the user types
 
@@ -226,7 +274,7 @@ be saved.
 `manifest.webmanifest` + `sw.js` make this a real installable app. That is not
 decoration — **on iOS, Safari wipes the storage of a site you have not opened
 for seven days, and a Home Screen install is exempt.** Installation is therefore
-part of the data-durability story above, which is why `storageSheet()` is where
+part of the data-durability story above, which is why `settingsSheet()` is where
 the app raises it: iOS gets the taps described (Safari never fires
 `beforeinstallprompt`), Chrome gets a real Install button from the captured
 event, and an already-installed app gets told it is safe.
@@ -260,7 +308,7 @@ legitimate pinch-zoom. `touch-action` is the fix.
 
     node tests.js        # fermentation model — 56 assertions
     node sync.tests.js   # the real Pages Function against a fake KV — 25
-    node ui.tests.js     # real DOM driven by clicks — 116 (needs: npm i jsdom)
+    node ui.tests.js     # real DOM driven by clicks — 121 (needs: npm i jsdom)
 
 Run all three before pushing, since a push deploys.
 

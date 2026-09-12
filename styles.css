@@ -120,7 +120,7 @@ button, .switch, [data-act], [data-key], label.field, input, textarea, select {
 /* A double-tap that lands between two keys selects the text under it instead,
  * which looks just as broken. Controls are for pressing, not for selecting —
  * the fields you actually type into are left alone. */
-button, .switch, [data-key], .navpill, .keypad {
+button, .switch, [data-key], .keypad {
   -webkit-user-select: none; user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
@@ -222,17 +222,6 @@ input, textarea, select { font-size: max(16px, 1em); }
 }
 .stat .v { font: 600 40px/1 var(--sans); letter-spacing: -.03em; margin-top: 14px; }
 .stat .v small { font-size: 20px; font-weight: 400; }
-.stat.wide {
-  grid-column: 1 / -1; min-height: 0; display: flex; align-items: center; gap: 12px;
-  background: var(--surface); border: 1px solid var(--line-soft);
-  color: var(--ink); padding: 14px 16px;
-}
-.stat.wide .v { font: 300 14.5px/1.4 var(--sans); margin: 0; flex: 1; letter-spacing: 0; }
-.flag {
-  display: inline-block; font: 700 9px/1 var(--mono); letter-spacing: .1em;
-  text-transform: uppercase; border-radius: 5px; padding: 5px 7px;
-  background: rgba(34, 30, 27, .12); margin-top: 8px;
-}
 .progressbar { height: 6px; border-radius: 3px; background: rgba(34, 30, 27, .16); overflow: hidden; margin-top: 14px; }
 html.night .progressbar { background: rgba(232, 223, 213, .14); }
 .progressbar i {
@@ -293,37 +282,6 @@ html.night .progressbar { background: rgba(232, 223, 213, .14); }
 .btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
 .btn.small { min-height: 48px; border-radius: var(--r-chip); font-size: 14.5px; padding: 0 16px; }
 .btn[disabled] { opacity: .4; }
-
-/* ============================================================== nav pill */
-.navpill {
-  position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(24px + env(safe-area-inset-bottom));
-  height: 62px; padding: 0 10px; border-radius: 31px;
-  background: var(--ink); display: flex; align-items: center; gap: 6px;
-  box-shadow: 0 10px 24px rgba(34, 30, 27, .28); z-index: 30;
-}
-html.night .navpill { background: var(--surface-2); border: 1px solid var(--line); box-shadow: none; }
-.navpill button {
-  width: 56px; height: 46px; border-radius: 23px;
-  display: grid; place-items: center;
-  transition: background-color .16s, transform .16s var(--ease);
-}
-.navpill button:active { transform: scale(.96); }
-.navpill button i {
-  display: block; width: 19px; height: 19px;
-  background: var(--bg); opacity: .62;
-  -webkit-mask: no-repeat center / contain; mask: no-repeat center / contain;
-}
-.navpill button[aria-current="true"] { background: var(--bg); }
-.navpill button[aria-current="true"] i { background: var(--ink); opacity: 1; }
-.navpill .n-home i {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='M4 11l8-6 8 6v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='M4 11l8-6 8 6v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z'/%3E%3C/svg%3E");
-}
-.navpill .n-hist i {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Cpath d='M12 8v4l3 2'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Cpath d='M12 8v4l3 2'/%3E%3C/svg%3E");
-}
 
 /* ======================================================== section titles */
 .section-title {
@@ -454,31 +412,6 @@ label.field textarea { min-height: 92px; resize: vertical; font-size: 16px; }
 .switch[aria-checked="true"] { background: var(--accent); }
 .switch[aria-checked="true"] i { left: 25px; background: var(--on-accent); }
 
-/* ============================================================== history */
-.bake {
-  position: relative; overflow: hidden;
-  background: var(--surface); border: 1px solid var(--line-soft);
-  border-radius: 24px; padding: 20px 22px; margin-bottom: 12px;
-}
-.bake h3 { font: 400 19px/1.2 var(--sans); letter-spacing: -.01em; margin-top: 4px; }
-.bake .meta { font: 400 11px/1.5 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted-2); margin: 8px 0 14px; }
-.bake .kv { display: flex; flex-wrap: wrap; gap: 16px 26px; margin-bottom: 12px; }
-.bake .kv span { font: 700 9.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted-2); }
-.bake .kv b { display: block; font: 600 24px/1 var(--sans); letter-spacing: -.02em; color: var(--ink); margin-top: 6px; }
-.empty {
-  text-align: center; color: var(--muted-2); padding: 48px 20px;
-  font: 300 15px/1.5 var(--sans);
-}
-
-/* The one thing allowed to shout. Terracotta is this screen's single accent
- * when it is showing, so nothing else on the live view competes with it. */
-.alarmbar {
-  display: block; width: 100%; text-align: left;
-  background: var(--accent); color: var(--on-accent);
-  border-radius: var(--r-row); padding: 16px 18px; margin-bottom: 14px;
-  font: 400 14.5px/1.4 var(--sans);
-}
-
 /* =============================================================== toast */
 #toast {
   position: fixed; left: 50%; bottom: calc(100px + env(safe-area-inset-bottom));
@@ -504,8 +437,8 @@ label.field textarea { min-height: 92px; resize: vertical; font-size: 16px; }
 #app.enter .hero { animation: fade .5s ease both; }
 #app.enter .hero.ready { animation: fade .7s ease-in-out both; }
 #app.enter .progressbar i { animation: rise .9s var(--ease) both; }
-#app.enter .c-rise { stroke-dasharray: 900; animation: draw 1.4s var(--ease) both; }
 
+#app.enter .c-rise { stroke-dasharray: 900; animation: draw 1.4s var(--ease) both; }
 @keyframes draw { from { stroke-dashoffset: 900; } to { stroke-dashoffset: 0; } }
 @keyframes rise { from { width: 0; } }
 @keyframes sheet { from { transform: translateY(28px); opacity: .4; } to { transform: translateY(0); opacity: 1; } }
