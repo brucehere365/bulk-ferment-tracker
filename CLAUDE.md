@@ -136,7 +136,16 @@ app carries on storing locally, silently.
   it. `settingsSheet()` warns about this and `ui.tests.js` asserts the warning.
 * **Setup is manual and one-off**, in the Cloudflare dashboard: create a KV
   namespace, bind it to the Pages project as `BAKES`. The setup steps are in a
-  comment at the top of the function.
+  comment at the top of the function. **Pages keeps Production and Preview
+  bindings separately**, so a namespace bound only to Production leaves every
+  `*.pages.dev` branch preview 503ing while production works — bind both, or
+  expect sync to look broken exactly where you test it.
+* **Never tell someone sync is working because the app accepted their code.**
+  It accepts any code of 8 characters offline. Only a completed round trip
+  proves anything, which is why `syncState.at` — not `syncState.code` — is what
+  `settingsSheet()` reads before it says a word about bakes being saved off the
+  phone, and why turning sync on toasts "Checking the server…" rather than a
+  success it has not yet earned. `ui.tests.js` asserts that distinction.
 * **The code is a shared secret, not authentication.** Anyone who knows it can
   read those bakes, and the sync sheet says exactly that. Minimum 8 characters.
   The code is never stored: the KV key is `SHA-256(salt + '\x00' + code)`, so a
@@ -299,7 +308,7 @@ legitimate pinch-zoom. `touch-action` is the fix.
 
     node tests.js        # fermentation model — 56 assertions
     node sync.tests.js   # the real Pages Function against a fake KV — 25
-    node ui.tests.js     # real DOM driven by clicks — 119 (needs: npm i jsdom)
+    node ui.tests.js     # real DOM driven by clicks — 121 (needs: npm i jsdom)
 
 Run all three before pushing, since a push deploys.
 

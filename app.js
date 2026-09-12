@@ -672,7 +672,11 @@
             if (v.length < SYNC_MIN) return err('At least ' + SYNC_MIN + ' characters.');
             saveSyncCode(v);
             closeSheet();
-            toast('On. Your bakes are saved under that code.');
+            /* Not "saved" — nothing has reached the server yet. syncNow(loud)
+             * replaces this with the real answer a moment later, and claiming
+             * success before hearing back is how someone ends up believing
+             * their bakes are backed up when the server has no KV bound. */
+            toast('Code saved on this phone. Checking the server…');
             syncNow(true);
           }
         });
@@ -691,9 +695,14 @@
       '<h2>Settings</h2>' +
 
       '<div class="section-title">Your code</div>' +
-      '<p class="hint">' + (on
-        ? 'On. Your bakes are saved off this phone and appear on any device you type this code into.'
-        : 'Off. Bakes are saved on this phone only.') + '</p>' +
+      /* A code set but never successfully synced is the dangerous state: it
+       * looks configured and backs up nothing. Say which of the three it is. */
+      '<p class="hint">' + (!on
+        ? 'Off. Bakes are saved on this phone only.'
+        : syncState.at
+          ? 'On. Your bakes are saved off this phone and appear on any device you type this code into.'
+          : 'Set, but nothing has reached the server yet. Bakes are saved on this phone only ' +
+            'until it does.') + '</p>' +
       '<p class="hint">One code each. Someone baking with a different code has their own separate ' +
       'bakes that never touch yours — that is how you give a friend an account. Never share yours: ' +
       'two people on one code share a single set of bakes, including which one is running now. ' +
@@ -765,7 +774,7 @@
             saveSyncCode(v);
             syncState.error = null;
             closeSheet();
-            toast('On. Saving this phone’s bakes.');
+            toast('Code saved on this phone. Checking the server…');
             syncNow(true);
           }
           if (act === 'abandon') {
@@ -964,7 +973,7 @@
       if (!res.ok) {
         return res.json()['catch'](function () { return {}; }).then(function (b) {
           throw new Error(b.error === 'sync-not-configured'
-            ? 'Sync is not set up on the server yet.'
+            ? 'No storage connected on the server — bakes are saving on this phone only.'
             : b.error === 'code-too-short' ? 'That code is too short.'
             : 'Sync failed (' + res.status + ').');
         });

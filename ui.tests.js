@@ -112,6 +112,20 @@ var wBusy = boot(JSON.stringify({
 ok('and never asks an install that already has bakes',
   !wBusy.document.querySelector('#sheet-root .sheet'));
 
+head('A CODE THAT HAS NEVER REACHED THE SERVER DOES NOT CLAIM IT HAS');
+/* The dangerous state: a code is set, so the app looks configured, but every
+ * push is 503ing because no KV is bound. Saying "saved off this phone" there is
+ * how someone believes their bakes are backed up when nothing is. */
+var wUn = boot(null, 0, JSON.stringify({ code: 'a-long-enough-code', asked: true }));
+wUn.fetch = function () { return Promise.reject(new Error('offline')); };
+wUn.document.querySelector('[data-act="menu"]').dispatchEvent(new wUn.MouseEvent('click', { bubbles: true }));
+var unSheet = wUn.document.querySelector('#sheet-root .sheet');
+ok('it says nothing has reached the server yet',
+  /nothing has reached the server yet/i.test(unSheet.textContent));
+ok('and does not claim the bakes are saved off the phone',
+  !/saved off this phone/i.test(unSheet.textContent),
+  JSON.stringify(unSheet.textContent.slice(0, 160)));
+
 head('BOOT');
 ok('lands straight on the bulk ferment form', !!$('#startform'));
 ok('there is no mode picker left to choose from', !act('mode-bulk') && !act('mode-full') && !act('mode-plan'));
