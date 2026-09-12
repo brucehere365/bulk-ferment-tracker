@@ -94,13 +94,17 @@ ok('and nowhere else for the app to be', !act('templates') && !act('loaves'));
 /* Booting with nothing must not write anything: the old unconditional boot
  * save is what turned an unreadable payload into a permanently blank one. */
 ok('a boot with no data writes nothing at all', w.localStorage.getItem('bft.v1') === null);
-ok('restore is reachable from the empty screen', !!act('storage'));
+/* The screen you are on when a bake has gone missing is the screen the backup
+ * has to be reachable from, so settings hang off the start view too. */
+ok('settings are reachable from the empty screen', !!act('menu'));
+/* One field. Starting a bulk is a temperature and a tap; a name, notes and a
+ * mode toggle were three decisions between the baker and the clock starting. */
+ok('starting a bulk asks for one thing', $$('#startform input, #startform textarea').length === 1);
 
 head('DECIMALS — a comma is a full stop');
 ok('the first-temperature field is not a type=number', $('#startform').elements.temp.type === 'text');
 ok('but still opens the decimal keyboard', $('#startform').elements.temp.getAttribute('inputmode') === 'decimal');
 var sf = $('#startform');
-setInput(sf.elements.name, 'Comma bake');
 setInput(sf.elements.temp, '23,5');
 sf.dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
 ok('a comma starts the bake', !!preshapeAt(text()));
@@ -119,13 +123,17 @@ ok('and no rule sneaks a sub-16px field back in',
 
 head('LIVE VIEW');
 ok('the hero says when to preshape', !!preshapeAt(text()));
-ok('the chart is drawn', !!$('.chartwrap svg'));
 ok('the readings list has the first reading', $$('.reading').length === 1);
-ok('progress, dough temp, target and expected rise are all on screen',
-  /Progress/.test(text()) && /Dough temp/.test(text()) && /Target rise/.test(text()) && /Expected rise now/.test(text()));
+ok('progress and dough temp are on screen',
+  /Progress/.test(text()) && /Dough temp/.test(text()));
+/* The jar went, and with it the numbers only a jar could act on. */
+ok('and nothing about a jar is left', !/Target rise|Expected rise|jar/i.test(text()));
 ok('the cue list is instructions, with nothing to tick',
   /Domed, not flat/.test(text()) && $$('.cues input').length === 0);
-ok('the nav pill is down to two destinations', $$('.navpill button').length === 2);
+/* Invariant 6: one primary button, and it is the one that ends the bulk. */
+ok('the primary button is the one that ends the bulk',
+  $$('.btn.primary').length === 1 && act('finish').classList.contains('primary'));
+ok('there is no nav left, because there is nowhere to go', !$('.navpill'));
 
 head('LOGGING A TEMPERATURE THROUGH THE KEYPAD');
 advance(1);
@@ -161,32 +169,19 @@ clickAct('save', sheet());
 ok('the gap temperature is stored, comma and all', bake().readings[3].gapTemp === 19.5, String(bake().readings[3].gapTemp));
 ok('and the reading says the gap was held', /gap held at 19\.5/.test(text()));
 
-head('EDITING A READING REPLAYS, IT DOES NOT PATCH');
+head('FIXING A READING REPLAYS, IT DOES NOT PATCH');
+/* A mistyped temperature is not cosmetic — 42 where you meant 24 throws the
+ * projection out — so the way back to the number is the keypad you typed it on. */
 var endBefore = preshapeAt(text());
 var second = bake().readings[1];
 click($('[data-act="edit"][data-id="' + second.id + '"]'));
-ok('the edit sheet is populated', $('#e-temp', sheet()).value === '24.5');
-ok('the temp field takes a comma too', $('#e-temp', sheet()).type === 'text');
-setInput($('#e-temp', sheet()), '27,5');
-clickAct('esave', sheet());
-ok('the edit is stored as a number', bake().readings[1].temp === 27.5, String(bake().readings[1].temp));
-ok('it recalculated from the first reading', /Recalculated from the first reading/.test(toastText()));
-ok('and the projection moved', preshapeAt(text()) !== endBefore);
-
-head('CALIBRATION FROM THE JAR');
-advance(1);
-clickAct('lograise');
-setInput($('#numval', sheet()), '55');
+ok('the same keypad opens on the stored value', $('#numval', sheet()).value === '24.5');
+setInput($('#numval', sheet()), '27,5');
 clickAct('save', sheet());
-ok('a jar reading is stored', bake().readings.slice(-1)[0].rise === 55);
-ok('and the app says what it learned in words',
-  /Tracking the table\.|Running about \d+% (faster|slower) than the table\./.test(text()));
-ok('resetting calibration is offered once there is a jar reading', !!act('resetcal'));
-clickAct('resetcal');
-clickAct('yes', sheet());
-ok('reset leaves the readings alone', bake().readings.filter(function (r) { return r.rise != null; }).length === 1);
-ok('but stops them steering the projection',
-  bake().readings.filter(function (r) { return r.ignoreCal; }).length === 1);
+ok('the fix is stored as a number', bake().readings[1].temp === 27.5, String(bake().readings[1].temp));
+ok('it recalculated rather than patched', /Recalculated/.test(toastText()));
+ok('and the projection moved', preshapeAt(text()) !== endBefore);
+ok('the reading kept the time it was actually taken', bake().readings[1].t === second.t);
 
 head('NOTHING IS DERIVED FROM A RUNNING TIMER');
 var beforeReload = text();
@@ -194,50 +189,41 @@ var saved = w.localStorage.getItem('bft.v1');
 var w2 = boot(saved, w.offset);
 var t2 = w2.document.getElementById('app').textContent;
 ok('a reload lands straight back in the running bulk', !!preshapeAt(t2));
-ok('with the same readings', (t2.match(/Edit/g) || []).length === (beforeReload.match(/Edit/g) || []).length);
+ok('with the same readings', (t2.match(/Fix/g) || []).length === (beforeReload.match(/Fix/g) || []).length);
 ok('and the same projection', preshapeAt(t2) === preshapeAt(beforeReload));
 ok('the bake survived the reload', JSON.parse(w2.localStorage.getItem('bft.v1')).bakes.length === 1);
 
-head('MENU AND SETTINGS');
+head('ONE SETTINGS SHEET, AND THE CODE IS THE FIRST THING IN IT');
 clickAct('menu');
-ok('the menu is a sheet', !!sheet());
-ok('alarm, notification and wake lock are all switchable',
-  !!act('t-sound', sheet()) && !!act('t-notify', sheet()) && !!act('t-wake', sheet()));
-ok('night has explicit day and night pins', $$('[data-act="night"]', sheet()).length === 3);
-click($('[data-act="night"][data-id="on"]', sheet()));
-ok('pinning night re-points the tokens and nothing else',
-  doc.documentElement.classList.contains('night'));
-click($('[data-act="night"][data-id="off"]', sheet()));
-ok('and day pins it back', !doc.documentElement.classList.contains('night'));
-setInput($('#lead', sheet()), '20');
-ok('the lead time is stored', stored().settings.leadMin === 20);
-clickAct('t-jar', sheet());
-ok('turning the jar off hides the rise button', !act('lograise'));
-ok('and offers a one-off instead', !!act('lograise-once', sheet()));
+ok('settings are a sheet', !!sheet());
+/* The code was three taps deep inside something called Backup, which is a good
+ * way to own an app for a week without finding the one setting that matters. */
+ok('the code field is right there, not behind another button',
+  !!$('#synccode', sheet()) && !act('sync', sheet()));
+ok('alarm sound and notification are switchable',
+  !!act('t-sound', sheet()) && !!act('t-notify', sheet()));
+ok('and the settings nobody was going to set are gone',
+  !act('t-wake', sheet()) && !$('#lead', sheet()) && !act('night', sheet()));
+ok('backup and restore are still here, tucked at the bottom',
+  !!act('backup-export', sheet()) && !!act('backup-import', sheet()));
+ok('there is no history or CSV left to offer',
+  !act('history', sheet()) && !act('csv', sheet()));
+clickAct('t-sound', sheet());
+ok('a toggle sticks', stored().settings.sound === false);
+click($('#sheet-root .backdrop'));
+ok('and tapping outside closes the sheet', !sheet());
 
-head('FINISHING AND HISTORY');
-clickAct('finish', sheet());
-ok('finishing lands in history', /History/.test(text()));
-ok('with nothing active', stored().activeId === null);
-ok('the finished bulk is listed', /Comma bake/.test(text()));
-ok('finishing opens the card straight away', !act('openbake') && !!act('closebake'));
-ok('an opened bake shows its chart', !!$('.chartwrap svg'));
-var crumb = $('[data-act="crumb"]');
-setInput(crumb, 'Open even crumb.');
-ok('the crumb note is saved', stored().bakes[0].crumb === 'Open even crumb.');
-clickAct('csv');
-ok('readings export as CSV', downloads.some(function (d) { return /^bulk-ferment-.*\.csv$/.test(d.name); }));
-ok('there is no stage export left to offer', !act('csv-stages'));
-clickAct('back');
-ok('back with nothing running goes to the start form', !!$('#startform'));
-
-head('DELETING');
-clickAct('history');
-clickAct('openbake');
-clickAct('delbake');
+head('FINISHING');
+clickAct('finish');
+ok('the primary button asks before it ends the bulk', /Finish this bulk/.test(sheet().textContent));
 clickAct('yes', sheet());
-ok('a deleted bake is gone', stored().bakes.length === 0);
-ok('and history says so', /No finished bakes yet/.test(text()));
+ok('finishing goes back to the start form', !!$('#startform'));
+ok('with nothing active', stored().activeId === null);
+/* Chosen deliberately: a mis-tap on a big primary button must not be the thing
+ * that destroys a bake, and sync needs it to exist to agree about it. */
+ok('the finished bake is kept, not deleted', stored().bakes.length === 1);
+ok('and is marked done', stored().bakes[0].status === 'done');
+ok('there is no history screen to look at it in', !act('history') && !act('openbake'));
 
 head('MIGRATION FROM v2');
 var v2 = JSON.stringify({
@@ -256,7 +242,7 @@ ok('the old bulk ferment is untouched', s3.bakes.length === 1 && s3.bakes[0].rea
 ok('it is what you land on', /Old bulk/.test(w3.document.getElementById('app').textContent));
 ok('templates, processes and drafts are dropped',
   !('templates' in s3) && !('processes' in s3) && !('draft' in s3) && !('activeProcessId' in s3));
-ok('settings carry over', s3.settings.leadMin === 45 && s3.settings.sound === false);
+ok('settings that still exist carry over', s3.settings.sound === false);
 ok('and the version is bumped once', s3.version === 3);
 
 /* ------------------------------------------------------------------------
@@ -269,9 +255,9 @@ function goodState(name, readings) {
     version: 3, activeId: 'k1', savedAt: t, bakes: [{
       id: 'k1', name: name, startedAt: t, status: 'active',
       readings: (readings || [{ id: 'x1', t: t, temp: 24, rise: null, gapTemp: null }]),
-      alerts: { lead: null, end: null }, crumb: '', finalCal: 1, useJar: true
+      alerts: { end: null }
     }],
-    settings: { leadMin: 30, sound: true, notify: false, wakeLock: true, useJar: true, night: 'auto' }
+    settings: { sound: true, notify: false }
   };
 }
 
@@ -331,17 +317,12 @@ ok('a failed write is reported, not swallowed',
 ok('and it stays on screen rather than fading with the toast',
   /Not saving\./.test(d7.getElementById('app').textContent));
 ok('the warning is a way through to the backup',
-  d7.querySelector('.alarmbar').dataset.act === 'storage');
+  d7.querySelector('.alarmbar').dataset.act === 'menu');
 
-/* On the live view the sheet is behind the ••• menu; on the start screen it is
- * a button in its own right. Both routes matter, so both get walked. */
-function openStorage(win, docu) {
-  var el = docu.querySelector('[data-act="storage"]');
-  if (!el) {
-    docu.querySelector('[data-act="menu"]').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
-    el = docu.querySelector('#sheet-root .sheet [data-act="storage"]');
-  }
-  el.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+/* Settings hang off the ••• on both screens, so one route reaches them from
+ * wherever the app happens to be. */
+function openSettings(win, docu) {
+  docu.querySelector('[data-act="menu"]').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
   return docu.querySelector('#sheet-root .sheet');
 }
 
@@ -354,11 +335,11 @@ w8.HTMLElement.prototype.click = function () {
   if (this.tagName === 'A' && this.download) { dl8.push(this.download); return; }
   return realClick8.apply(this, arguments);
 };
-var sheet8 = openStorage(w8, d8);
-ok('the storage sheet says how many bakes are stored',
-  /1 bake stored in this browser/.test(sheet8.textContent), JSON.stringify(sheet8.textContent.slice(0, 80)));
-ok('and warns that bakes do not follow you to another URL',
-  /different URL/.test(sheet8.textContent));
+var sheet8 = openSettings(w8, d8);
+ok('the settings sheet says how many bakes are stored',
+  /1 bake on this phone/.test(sheet8.textContent), JSON.stringify(sheet8.textContent.slice(0, 80)));
+ok('and warns that bakes do not follow you to another web address',
+  /different web\s*address/.test(sheet8.textContent));
 sheet8.querySelector('[data-act="backup-export"]').dispatchEvent(new w8.MouseEvent('click', { bubbles: true }));
 ok('a backup downloads as JSON', dl8.some(function (n) { return /^trackmyloaf-backup-.*\.json$/.test(n); }),
   JSON.stringify(dl8));
@@ -375,7 +356,7 @@ d9.createElement = function (tag) {
   if (tag === 'input') captured = el;
   return el;
 };
-var sheet9 = openStorage(w9, d9);
+var sheet9 = openSettings(w9, d9);
 sheet9.querySelector('[data-act="backup-import"]').dispatchEvent(new w9.MouseEvent('click', { bubbles: true }));
 
 var incoming = goodState('Bake from the old URL');
@@ -444,8 +425,8 @@ var wA = boot(JSON.stringify(goodState('Eviction bake')), 0);
 var dA = wA.document;
 Object.defineProperty(wA.navigator, 'userAgent',
   { value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15', configurable: true });
-var sheetA = openStorage(wA, dA);
-ok('the storage sheet explains the seven-day wipe',
+var sheetA = openSettings(wA, dA);
+ok('the settings sheet explains the seven-day wipe',
   /seven days/.test(sheetA.textContent), JSON.stringify(sheetA.textContent.slice(-260)));
 ok('and tells you the taps that fix it',
   /Add to Home Screen/.test(sheetA.textContent));
@@ -504,17 +485,16 @@ function syncTests() {
       JSON.stringify(calls.map(function (c) { return c.url; })));
 
     head('TURNING SYNC ON');
-    var sheetS = openStorage(wS, dS);
-    ok('the storage sheet offers to set it up', !!sheetS.querySelector('[data-act="sync"]'));
-    sheetS.querySelector('[data-act="sync"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));
-    var syncSheetEl = dS.querySelector('#sheet-root .sheet');
-    ok('the sync sheet says who can read the bakes',
+    var syncSheetEl = openSettings(wS, dS);
+    ok('the code field is in settings itself, one tap in',
+      !!syncSheetEl.querySelector('#synccode'));
+    ok('settings say who can read the bakes',
       /anyone who knows it can read your bakes/i.test(syncSheetEl.textContent));
     /* Sharing one code between two bakers also shares activeId, so the other
      * person starting a bulk moves your live view onto their dough. The sheet
      * has to say so — the mistake is easy and nothing about it looks wrong. */
-    ok('and tells a second baker to take their own code',
-      /own code/i.test(syncSheetEl.textContent));
+    ok('and tell a second baker to take their own code',
+      /one code each/i.test(syncSheetEl.textContent) && /never share yours/i.test(syncSheetEl.textContent));
 
     syncSheetEl.querySelector('#synccode').value = 'short';
     syncSheetEl.querySelector('[data-act="sync-save"]').dispatchEvent(new wS.MouseEvent('click', { bubbles: true }));
@@ -543,18 +523,32 @@ function syncTests() {
         ok('applying a merge does not bounce another push straight back',
           calls.length === before, before + ' → ' + calls.length);
 
-        head('DELETING LEAVES A TOMBSTONE, SO IT STAYS DELETED');
+        head('A TOMBSTONE FROM ANOTHER DEVICE IS STILL HONOURED');
+        /* Nothing in the app deletes a bake any more, but the other phone can
+         * still be running a build that does, and a bake it deleted must not
+         * come back from here — that is what teaches you to distrust delete. */
         var wD = boot(JSON.stringify(goodState('Doomed')), 0);
         var dD = wD.document;
-        dD.querySelector('[data-act="menu"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
-        dD.querySelector('#sheet-root .sheet [data-act="finish"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
-        dD.querySelector('[data-act="delbake"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
-        dD.querySelector('#sheet-root .sheet [data-act="yes"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
-        var sD = JSON.parse(wD.localStorage.getItem('bft.v1'));
-        ok('the bake is gone', sD.bakes.length === 0);
-        ok('and a tombstone records it', !!sD.deleted && !!sD.deleted.k1,
-          JSON.stringify(sD.deleted));
-        finish();
+        wD.fetch = function () {
+          return Promise.resolve({
+            ok: true,
+            json: function () {
+              return Promise.resolve({ state: { bakes: [], deleted: { k1: Date.now() }, activeId: null } });
+            }
+          });
+        };
+        var sheetD = openSettings(wD, dD);
+        sheetD.querySelector('#synccode').value = 'a-long-enough-code';
+        sheetD.querySelector('[data-act="sync-save"]').dispatchEvent(new wD.MouseEvent('click', { bubbles: true }));
+        setTimeout(function () {
+          var sD = JSON.parse(wD.localStorage.getItem('bft.v1'));
+          ok('the bake deleted elsewhere is removed here', sD.bakes.length === 0,
+            JSON.stringify(sD.bakes.map(function (b) { return b.id; })));
+          ok('and the tombstone is kept so it cannot come back', !!sD.deleted && !!sD.deleted.k1,
+            JSON.stringify(sD.deleted));
+          ok('with nothing left running', sD.activeId === null);
+          finish();
+        }, 60);
       }, 60);
     }, 30);
   }, 4200);

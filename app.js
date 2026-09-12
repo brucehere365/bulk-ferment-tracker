@@ -6,7 +6,6 @@
   'use strict';
 
   var M = window.BFModel;
-  var H = M.MS_PER_HOUR;
   var KEY = 'bft.v1';
   var PREV = 'bft.v1.prev';       // the write before the current one
   var QUAR = 'bft.v1.corrupt';    // a payload that would not parse, kept rather than dropped
@@ -31,7 +30,7 @@
   function blank() {
     return {
       version: 3, activeId: null, bakes: [], deleted: {}, savedAt: 0,
-      settings: { leadMin: 30, sound: true, notify: false, wakeLock: true, useJar: true, night: 'auto' }
+      settings: { sound: true, notify: false }
     };
   }
 
@@ -183,13 +182,6 @@
     var mins = Math.round(ms / 60000), h = Math.floor(mins / 60), m = mins % 60;
     return (neg ? '-' : '') + (h ? h + 'h ' : '') + m + 'm';
   }
-  function dateStr(ms) { return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }); }
-  function localInput(ms) {
-    var d = new Date(ms - d0(ms));
-    return d.toISOString().slice(0, 16);
-  }
-  function d0(ms) { return new Date(ms).getTimezoneOffset() * 60000; }
-  function fromLocalInput(v) { var t = new Date(v).getTime(); return isNaN(t) ? null : t; }
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -205,12 +197,10 @@
     return s === '' ? NaN : parseFloat(s);
   }
 
-  /* Night is the same layout dimmed, not a different app. Auto flips it
-   * between 23:00 and 06:00 — the hours this thing actually gets read in. */
+  /* Night is the same layout dimmed, not a different app, and it is automatic:
+   * 23:00 to 06:00 are the hours this thing actually gets read in, and a
+   * Day/Night pin was one more decision on a screen that should ask for none. */
   function isNight() {
-    var mode = state.settings.night || 'auto';
-    if (mode === 'on') return true;
-    if (mode === 'off') return false;
     var h = new Date().getHours();
     return h >= 23 || h < 6;
   }
@@ -229,129 +219,15 @@
     toastTimer = setTimeout(function () { el.classList.remove('on'); }, 2600);
   }
 
-  // --------------------------------------------------------------- chart
-  function chartSVG(readings, now, opts) {
-    opts = opts || {};
-    var ser = M.buildSeries(readings, now);
-    if (!ser) return '<div class="chart-empty">No readings yet.</div>';
-    var st = ser.state;
-    var W = 360, HT = 236, padL = 34, padR = 34, padT = 14, padB = 26;
-    var t0 = ser.history[0].t;
-    var tEnd = opts.historic ? now : Math.max(now, st.predictedEnd);
-    var span = Math.max(tEnd - t0, 45 * 60000);
-    tEnd = t0 + span * 1.04;
-    span = tEnd - t0;
-    var X = function (t) { return padL + (t - t0) / span * (W - padL - padR); };
-
-    var riseVals = ser.history.map(function (p) { return p.rise; })
-      .concat(ser.observed.map(function (o) { return o.rise; }), [st.target, st.expectedRise, 10]);
-    var yMax = Math.max.apply(null, riseVals) * 1.14;
-    var Y = function (v) { return HT - padB - (v / yMax) * (HT - padB - padT); };
-
-    var temps = ser.history.map(function (p) { return p.temp; });
-    var tMin = Math.min.apply(null, temps), tMax = Math.max.apply(null, temps);
-    if (tMax - tMin < 3) { var mid = (tMin + tMax) / 2; tMin = mid - 1.6; tMax = mid + 1.6; }
-    else { var pd = (tMax - tMin) * 0.3; tMin -= pd; tMax += pd; }
-    var Y2 = function (v) { return HT - padB - ((v - tMin) / (tMax - tMin)) * (HT - padB - padT); };
-
-    function path(pts, acc) {
-      return pts.map(function (p, i) { return (i ? 'L' : 'M') + X(p.t).toFixed(1) + ' ' + acc(p).toFixed(1); }).join(' ');
-    }
-    var s = [];
-    s.push('<svg viewBox="0 0 ' + W + ' ' + HT + '" role="img" aria-label="Rise and temperature over time">');
-
-    // rise gridlines + left axis
-    var rStep = yMax <= 45 ? 10 : yMax <= 90 ? 20 : yMax <= 140 ? 25 : 50;
-    for (var v = 0; v <= yMax; v += rStep) {
-      s.push('<line x1="' + padL + '" y1="' + Y(v).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(v).toFixed(1) + '" class="c-grid" stroke-width="1"/>');
-      s.push('<text x="' + (padL - 5) + '" y="' + (Y(v) + 3.5).toFixed(1) + '" class="c-axis" font-size="9.5" text-anchor="end">' + v + '</text>');
-    }
-    // time ticks
-    var hSpan = span / H;
-    var stepH = [0.5, 1, 2, 3, 4, 6, 8, 12].filter(function (x) { return hSpan / x <= 6; })[0] || 24;
-    var base = new Date(t0); base.setMinutes(0, 0, 0);
-    for (var t = base.getTime(); t <= tEnd; t += stepH * H) {
-      if (t < t0) continue;
-      s.push('<line x1="' + X(t).toFixed(1) + '" y1="' + padT + '" x2="' + X(t).toFixed(1) + '" y2="' + (HT - padB) + '" class="c-vgrid" stroke-width="1"/>');
-      s.push('<text x="' + X(t).toFixed(1) + '" y="' + (HT - padB + 13) + '" class="c-axis" font-size="9.5" text-anchor="middle">' + clock(t) + '</text>');
-    }
-
-    // target band — moves vertically with the current temperature
-    var bandLo = Y(st.target * 1.04), bandHi = Y(st.target * 0.96);
-    s.push('<rect x="' + padL + '" y="' + bandLo.toFixed(1) + '" width="' + (W - padL - padR) + '" height="' + Math.max(3, bandHi - bandLo).toFixed(1) + '" class="c-band"/>');
-    s.push('<line x1="' + padL + '" y1="' + Y(st.target).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(st.target).toFixed(1) + '" class="c-target" stroke-width="1" stroke-dasharray="3 5"/>');
-    s.push('<text x="' + (padL + 3) + '" y="' + (Y(st.target) - 4).toFixed(1) + '" class="c-target-text" font-size="9.5">target ' + Math.round(st.target) + '%</text>');
-
-    // temperature, right axis — subdued context
-    s.push('<path d="' + path(ser.history, function (p) { return Y2(p.temp); }) + '" fill="none" class="c-temp" stroke-width="1.2" stroke-linejoin="round"/>');
-    ser.tempMarks.forEach(function (m) {
-      s.push('<rect x="' + (X(m.t) - 2).toFixed(1) + '" y="' + (Y2(m.temp) - 2).toFixed(1) + '" width="4" height="4" class="c-temp-mark"/>');
-    });
-    [tMin + (tMax - tMin) * 0.12, (tMin + tMax) / 2, tMax - (tMax - tMin) * 0.12].forEach(function (tv) {
-      s.push('<text x="' + (W - padR + 4) + '" y="' + (Y2(tv) + 3.5).toFixed(1) + '" class="c-temp-axis" font-size="9.5">' + n1(Math.round(tv * 2) / 2) + '°</text>');
-    });
-
-    // modelled rise so far
-    s.push('<path d="' + path(ser.history, function (p) { return Y(p.rise); }) + '" fill="none" class="c-rise" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>');
-
-    // projection
-    if (ser.projection.length && !opts.historic) {
-      s.push('<path d="' + path(ser.projection, function (p) { return Y(p.rise); }) + '" fill="none" class="c-proj" stroke-width="2" stroke-dasharray="4 6" stroke-linecap="round"/>');
-    }
-
-    // jar readings
-    ser.observed.forEach(function (o) {
-      s.push('<circle cx="' + X(o.t).toFixed(1) + '" cy="' + Y(o.rise).toFixed(1) + '" r="4.6" class="c-jar" stroke-width="2.2"/>');
-    });
-
-    // now
-    s.push('<line x1="' + X(now).toFixed(1) + '" y1="' + padT + '" x2="' + X(now).toFixed(1) + '" y2="' + (HT - padB) + '" class="c-now" stroke-width="1" stroke-dasharray="2 3"/>');
-    s.push('<text x="' + X(now).toFixed(1) + '" y="' + (padT - 4) + '" class="c-now-text" font-size="9.5" text-anchor="' + (opts.historic ? 'end' : 'middle') + '">' + (opts.historic ? 'end' : 'now') + '</text>');
-
-    // predicted end
-    if (st.predictedEnd >= t0 && st.predictedEnd <= tEnd) {
-      var xe = X(st.predictedEnd), ye = Y(st.target);
-      s.push('<line x1="' + xe.toFixed(1) + '" y1="' + ye.toFixed(1) + '" x2="' + xe.toFixed(1) + '" y2="' + (HT - padB) + '" class="c-end" stroke-width="1"/>');
-      s.push('<circle cx="' + xe.toFixed(1) + '" cy="' + ye.toFixed(1) + '" r="4" class="c-end-dot"/>');
-      var right = xe > W * 0.6;
-      s.push('<text x="' + (right ? xe - 6 : xe + 6).toFixed(1) + '" y="' + (ye + 15).toFixed(1) + '" class="c-end-text" font-size="10.5" text-anchor="' + (right ? 'end' : 'start') + '">' + clock(st.predictedEnd) + '</text>');
-    }
-    s.push('</svg>');
-
-    return '<div class="chartwrap">' + s.join('') +
-      '<div class="legend">' +
-      '<span><i style="border-color:var(--ink)"></i>rise %</span>' +
-      (opts.historic ? '' : '<span><i style="border-color:var(--muted-2);border-top-style:dashed"></i>projected</span>') +
-      (ser.observed.length ? '<span><i style="border:2px solid var(--accent);border-radius:50%;width:8px;height:8px;vertical-align:-1px"></i>jar reading</span>' : '') +
-      '<span><i style="border-color:var(--temp-line)"></i>dough temp</span>' +
-      '</div></div>';
-  }
-
-  // ---------------------------------------------------------------- views
   var view = 'start';
   var lastView = null;
-  var openBakeId = null;
 
+  /* Two screens, and which one you get is not a choice you make: either a bulk
+   * is running or it is not. There is no nav, because there is nowhere to go. */
   var VIEWS = {
     start: function () { return startView(); },
-    live: function () { return liveView(activeBake()); },
-    history: function () { return historyView(); }
+    live: function () { return liveView(activeBake()); }
   };
-
-  /* The floating pill is the only persistent chrome. Two slots is all there is
-   * left to say: the bake in front of you, and the ones behind it. Settings
-   * live under the ••• on the live view, where they are actually needed. */
-  var NAV_VIEWS = { start: 1, live: 1, history: 1 };
-  function navPill() {
-    function b(cls, act, label, current) {
-      return '<button class="' + cls + '" data-act="' + act + '" aria-label="' + label + '"' +
-        (current ? ' aria-current="true"' : '') + '><i></i></button>';
-    }
-    return '<nav class="navpill" aria-label="Main">' +
-      b('n-home', 'home', 'Home', view === 'start' || view === 'live') +
-      b('n-hist', 'history', 'History', view === 'history') +
-      '</nav>';
-  }
 
   function render() {
     var app = document.getElementById('app');
@@ -360,9 +236,9 @@
     /* Entrance animations belong to arriving at a view, not to the clock. */
     app.className = view === lastView ? '' : 'enter';
     lastView = view;
-    app.innerHTML = (VIEWS[view] || VIEWS.start)() + (NAV_VIEWS[view] ? navPill() : '');
+    app.innerHTML = (VIEWS[view] || VIEWS.start)();
     bindAll(app);
-    if (view === 'live') { syncAlerts(); ensureWakeLock(); } else { clearTimers(); releaseWakeLock(); }
+    if (view === 'live') syncAlerts(); else clearTimers();
   }
 
   // ---------------------------------------------------------- start view
@@ -370,21 +246,15 @@
    * bulk you are already running or on the form that starts one. No mode
    * picker: nobody wants to choose anything at 6am with dough on the bench. */
   function startView() {
-    var has = state.bakes.length > 0;
     return '' +
       '<div class="topbar">' +
       '<h1><span class="sub">' + new Date().toLocaleDateString(undefined, { weekday: 'long' }) +
       ' · the dough decides</span>Bulk <b>ferment</b></h1>' +
-      (has ? '<button class="iconbtn" data-act="history">History</button>' : '') + '</div>' +
+      '<button class="iconbtn" data-act="menu" aria-label="Settings">•••</button></div>' +
       '<div class="hero setup"><div class="label">No bake running</div>' +
       '<div class="remain" style="margin-top:8px">Take the dough temperature and start the clock.</div></div>' +
       '<form id="startform">' +
-      '<label class="field">Bake name<input name="name" placeholder="' + esc(defaultName()) + '" autocomplete="off"></label>' +
-      '<label class="field">Notes — flour, hydration, starter<textarea name="notes" placeholder="80% AP / 20% wholewheat, 75% hydration, 20% levain at peak"></textarea></label>' +
-      '<div class="toggle" style="margin-top:14px"><div class="t">Aliquot jar' +
-      '<em>Off is fine — temperature alone drives the whole prediction. You can switch it on mid-bake.</em></div>' +
-      '<button type="button" class="switch" role="switch" aria-checked="' + !!state.settings.useJar + '" data-act="t-jar-start"><i></i></button></div>' +
-      '<label class="field">First dough temperature °C — this timestamps the start' +
+      '<label class="field">Dough temperature °C' +
       /* Text, not number: a `type=number` field silently discards a comma, and
        * half the phones that open this app put a comma on the decimal key. */
       '<input name="temp" type="text" inputmode="decimal" autocomplete="off" placeholder="24.5" required></label>' +
@@ -392,48 +262,36 @@
       '<div class="spacer"></div>' +
       '<button class="btn primary" type="submit">Start bulk</button>' +
       '</form>' +
-      (has ? '<p class="note center">' + state.bakes.length + ' bake' + (state.bakes.length > 1 ? 's' : '') + ' in history.</p>' : '') +
-      /* Reachable from the screen you land on when a bake has gone missing —
-       * which is the only screen that matters when one has. */
+      /* Settings are reachable from the screen you land on when a bake has gone
+       * missing, because that is the screen you are on when you need the
+       * backup — not only from a menu that needs a running bake to exist. */
       '<div class="spacer"></div>' +
-      '<button class="btn small ghost" data-act="storage">' +
-      (has ? 'Backup and restore' : 'Restore from a backup') + '</button>';
+      '<button class="btn small ghost" data-act="menu">Settings</button>';
   }
 
   function defaultName() {
     return new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' bake';
   }
 
-  /* A bake tracked without an aliquot jar hides the jar controls entirely.
-   * The model is unchanged: temperature alone drives the whole prediction. */
-  function usesJar(bake) { return !bake || bake.useJar !== false; }
-
   function lastTempAt(bake) {
     var withTemp = M.sortReadings(bake.readings).filter(function (r) { return r.temp != null; });
     return withTemp.length ? withTemp[withTemp.length - 1].t : bake.startedAt;
   }
 
-  /* The readings list, newest first, each one editable. Shared by the
-   * standalone live view and by the bulk stage inside a full bake — a
-   * mistyped temperature has to be correctable from wherever you logged it. */
+  /* Newest first, each one editable: a mistyped temperature is not a cosmetic
+   * problem — 42 where you meant 24 throws the whole projection out — so there
+   * has to be a way back to the number without abandoning the bake. */
   function readingsList(bake) {
-    var rep = M.replay(bake.readings);
-    var byId = {};
-    rep.points.forEach(function (p) { byId[p.id] = p; });
     var readings = M.sortReadings(bake.readings).slice().reverse();
     return '<div class="section-title">Readings</div>' +
       '<ul class="readings">' + readings.map(function (r) {
-        var p = byId[r.id] || {};
-        var bits = [];
-        if (r.temp != null) bits.push('<b>' + n1(r.temp) + '°C</b>');
-        if (r.rise != null) bits.push('<b>jar ' + n1(r.rise) + '%</b>');
+        if (r.temp == null) return '';
         var sub = [];
         if (r.gapTemp != null) sub.push('gap held at ' + n1(r.gapTemp) + '°');
-        if (p.progress != null) sub.push(Math.round(p.progress * 100) + '% through');
-        if (r.temp != null && M.isExtrapolated(r.temp)) sub.push('extrapolated');
+        if (M.isExtrapolated(r.temp)) sub.push('outside the table');
         return '<li class="reading"><span class="when">' + clock(r.t) + '</span>' +
-          '<span class="what">' + bits.join(' · ') + '<em>' + esc(sub.join(' · ')) + '</em></span>' +
-          '<button class="edit" data-act="edit" data-id="' + r.id + '" aria-label="Edit reading">Edit</button></li>';
+          '<span class="what"><b>' + n1(r.temp) + '°C</b><em>' + esc(sub.join(' · ')) + '</em></span>' +
+          '<button class="edit" data-act="edit" data-id="' + r.id + '" aria-label="Fix this reading">Fix</button></li>';
       }).join('') + '</ul>';
   }
 
@@ -452,37 +310,29 @@
         '<div class="remain"><strong>' + dur(st.msRemaining) + '</strong> to go' + dayTag(st.predictedEnd, now) + '</div></div>';
     }
 
-    var calLine = M.calibrationPhrase(st.cal);
-    var jar = usesJar(bake);
-
     return '' +
       '<div class="topbar">' +
-      '<button class="iconbtn" data-act="home" aria-label="Home">Home</button>' +
       '<h1><span class="sub">Started ' + clock(bake.startedAt) + ' · ' + dur(now - bake.startedAt) + ' in</span>' + esc(bake.name) + '</h1>' +
-      '<button class="iconbtn" data-act="menu" aria-label="Menu">•••</button></div>' +
+      '<button class="iconbtn" data-act="menu" aria-label="Settings">•••</button></div>' +
       /* A toast you might not be looking at is not enough to tell someone the
        * bake in front of them is not being written down. */
       (storageBroken
-        ? '<button class="alarmbar" data-act="storage">Not saving. This browser is blocking storage — ' +
+        ? '<button class="alarmbar" data-act="menu">Not saving. This browser is blocking storage — ' +
           'tap to export a backup before you lose this bake.</button>' : '') +
       hero +
       '<div class="stats">' +
       '<div class="stat"><div class="k">Progress</div><div class="v">' + Math.round(st.progress * 100) + '<small>%</small></div>' +
       '<div class="progressbar' + (st.ready ? ' ready' : '') + '"><i style="width:' + pct + '%"></i></div></div>' +
       '<div class="stat"><div class="k">Dough temp</div><div class="v">' + n1(st.currentTemp) + '<small>°C</small></div>' +
-      (st.extrapolated ? '<span class="flag">extrapolated</span>' : '<div class="k" style="margin-top:8px">as of ' + clock(lastTempAt(bake)) + '</div>') + '</div>' +
-      '<div class="stat"><div class="k">Target rise</div><div class="v">' + Math.round(st.target) + '<small>%</small></div>' +
-      '<div class="k" style="margin-top:8px">at ' + n1(st.currentTemp) + '°C</div></div>' +
-      '<div class="stat"><div class="k">Expected rise now</div><div class="v">' + Math.round(st.expectedRise) + '<small>%</small></div>' +
-      '<div class="k" style="margin-top:8px">' + (jar ? 'jar should be here' : 'dough should be here') + '</div></div>' +
-      ((jar || st.calibrated) ? '<div class="stat wide"><div class="v">' + esc(calLine) + '</div>' +
-        (st.calibrated ? '<button class="btn small ghost" style="width:auto;flex:0 0 auto" data-act="resetcal">Reset</button>' : '') + '</div>' : '') +
+      (st.extrapolated ? '<span class="flag">outside the table</span>' : '<div class="k" style="margin-top:8px">as of ' + clock(lastTempAt(bake)) + '</div>') + '</div>' +
       '</div>' +
-      chartSVG(bake.readings, now) +
       (st.gapPending ? '<p class="note center">No reading for ' + dur(st.sinceLastMs) + ' — the next entry will ask what happened in between.</p>' : '') +
-      '<div class="actions"' + (jar ? '' : ' style="grid-template-columns:1fr"') + '>' +
-      '<button class="btn primary" data-act="logtemp">Log temp</button>' +
-      (jar ? '<button class="btn" data-act="lograise">Log rise %</button>' : '') +
+      /* Invariant 4: the bulk never ends itself. The tap that ends it is the
+       * primary button and the only one, because deciding the dough is done is
+       * the whole job — logging another temperature is just refining the guess. */
+      '<div class="actions" style="grid-template-columns:1fr">' +
+      '<button class="btn primary" data-act="finish">Preshape now — finish bulk</button>' +
+      '<button class="btn" data-act="logtemp">Log temperature</button>' +
       '</div>' +
       readingsList(bake) +
       '<div class="cues">' +
@@ -490,55 +340,6 @@
       '<ul><li>Domed, not flat</li><li>Jiggles as one mass</li>' +
       '<li>Bubbles visible at the edges and surface</li>' +
       '<li>Feels alive and airy, not soupy</li></ul></div>';
-  }
-
-  function historyView() {
-    var done = state.bakes.filter(function (b) { return b.id !== state.activeId; })
-      .sort(function (a, b) { return b.startedAt - a.startedAt; });
-
-    return '<div class="topbar"><button class="iconbtn" data-act="back">Back</button>' +
-      '<h1><span class="sub">History</span>What the dough <b>did last time</b></h1>' +
-      '<button class="iconbtn" data-act="storage">Backup</button>' +
-      (done.length ? '<button class="iconbtn" data-act="csv">CSV</button>' : '') + '</div>' +
-      (done.length ? done.map(bakeCard).join('') : '<div class="empty">No finished bakes yet.</div>');
-  }
-
-  function bakeCard(b) {
-    var open = openBakeId === b.id;
-    var end = b.finishedAt || (b.readings.length ? M.sortReadings(b.readings).slice(-1)[0].t : b.startedAt);
-    var rep = M.replay(b.readings);
-    var st = b.readings.length ? M.stateAt(b.readings, end) : null;
-    return '<div class="bake">' +
-      '<h3>' + esc(b.name) + '</h3>' +
-      '<div class="meta">' + dateStr(b.startedAt) + ' · started ' + clock(b.startedAt) + ' · ran ' + dur(end - b.startedAt) + '</div>' +
-      '<div class="kv">' +
-      '<span>progress <b>' + Math.round(rep.progress * 100) + '%</b></span>' +
-      '<span>readings <b>' + b.readings.length + '</b></span>' +
-      (usesJar(b) || Math.abs(rep.cal - 1) > 0.005 ? '<span>calibration <b>' + (Math.round(rep.cal * 100) / 100) + '×</b></span>' : '') +
-      (st ? '<span>final temp <b>' + n1(st.currentTemp) + '°C</b></span>' : '') +
-      '</div>' +
-      (usesJar(b) || Math.abs(rep.cal - 1) > 0.005 ? '<div class="note" style="margin-bottom:8px">' + esc(M.calibrationPhrase(rep.cal)) + '</div>' : '') +
-      (b.notes ? '<div class="note">' + esc(b.notes) + '</div>' : '') +
-      (open ? (b.readings.length ? chartSVG(b.readings, end, { historic: true }) : '') +
-        '<label class="field">Crumb result — how did it actually bake?' +
-        '<textarea data-act="crumb" data-id="' + b.id + '" placeholder="Open even crumb, slight gumminess at the base…">' + esc(b.crumb || '') + '</textarea></label>' +
-        '<div class="row" style="display:flex;gap:10px;margin-top:12px">' +
-        '<button class="btn small ghost" data-act="closebake">Close</button>' +
-        '<button class="btn small danger" data-act="delbake" data-id="' + b.id + '">Delete bake</button></div>'
-        : '<button class="btn small ghost" data-act="openbake" data-id="' + b.id + '">Open</button>') +
-      '</div>';
-  }
-
-  /* Auto is the honest default — the app knows what time it is. The manual
-   * pins exist because a dark kitchen at 18:00 in December is a real thing. */
-  function nightChoices() {
-    var cur = state.settings.night || 'auto';
-    return '<div class="choices three">' + [
-      ['auto', 'Auto 23–06'], ['off', 'Day'], ['on', 'Night']
-    ].map(function (o) {
-      return '<button class="btn small" data-act="night" data-id="' + o[0] + '"' +
-        ' aria-pressed="' + (cur === o[0]) + '">' + o[1] + '</button>';
-    }).join('') + '</div>';
   }
 
   // --------------------------------------------------------------- sheets
@@ -682,32 +483,16 @@
     });
   }
 
-  function logRise() {
-    var bake = activeBake();
-    withGap(bake, function (gapTemp) {
-      var st = M.stateAt(bake.readings, Date.now());
-      var lastRise = M.sortReadings(bake.readings).filter(function (r) { return r.rise != null; }).slice(-1)[0];
-      numberSheet({
-        title: 'Aliquot jar rise %',
-        hint: 'Model expects about ' + Math.round(st.expectedRise) + '% right now (target ' + Math.round(st.target) + '%).',
-        value: lastRise ? Math.round(Math.max(lastRise.rise, st.expectedRise)) : Math.round(st.expectedRise),
-        step: 5, min: 0, max: 400, unit: '% above the starting mark',
-        onSave: function (v) { commit(bake, { rise: v, gapTemp: gapTemp }); }
-      });
-    });
-  }
-
   function commit(bake, fields) {
     var reading = {
       id: uid(), t: Date.now(),
       temp: fields.temp == null ? null : fields.temp,
-      rise: fields.rise == null ? null : fields.rise,
+      rise: null,
       gapTemp: fields.gapTemp == null ? null : fields.gapTemp
     };
     var v = M.validateReading(bake.readings, reading);
     if (!v.ok) return err(v.message);
     var before = M.stateAt(bake.readings, Date.now());
-    if (reading.rise != null) bake.useJar = true;   // jar is clearly to hand
     bake.readings.push(reading);
     save(); closeSheet(); render();
     /* If the write failed, save() has already said so and that is the more
@@ -722,107 +507,121 @@
     } else { toast('Logged.'); }
   }
 
+  /* Fixing a reading is the same keypad you logged it on — one number, no
+   * form. The time it was taken is not editable: it is what actually happened,
+   * and the only thing anyone ever needs to correct is a fat-fingered digit. */
   function editReading(id) {
     var bake = activeBake();
     var r = bake.readings.filter(function (x) { return x.id === id; })[0];
-    if (!r) return;
-    openSheet(
-      '<h2>Edit reading</h2>' +
-      '<p class="hint">Everything after this is recalculated from scratch.</p>' +
-      '<label class="field">Time<input id="e-time" type="datetime-local" value="' + localInput(r.t) + '"></label>' +
-      '<label class="field">Dough temp °C — blank to leave it out' +
-      '<input id="e-temp" type="text" inputmode="decimal" autocomplete="off" value="' + (r.temp == null ? '' : r.temp) + '"></label>' +
-      '<label class="field">Jar rise % — blank to leave it out' +
-      '<input id="e-rise" type="text" inputmode="decimal" autocomplete="off" value="' + (r.rise == null ? '' : r.rise) + '"></label>' +
-      '<label class="field">Interim temp across the gap before this reading °C' +
-      '<input id="e-gap" type="text" inputmode="decimal" autocomplete="off" value="' + (r.gapTemp == null ? '' : r.gapTemp) + '"></label>' +
-      '<div class="err" id="sheeterr"></div>' +
-      '<div class="row"><button class="btn ghost" data-act="cancel">Cancel</button>' +
-      '<button class="btn primary" data-act="esave">Save</button></div>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn small danger" data-act="edel">Delete this reading</button>',
-      function (sheet) {
-        sheet.addEventListener('click', function (e) {
-          var act = e.target.dataset.act;
-          if (act === 'cancel') return closeSheet();
-          if (act === 'edel') {
-            if (bake.readings.length === 1) return err('The first reading is what started the bake. Abandon the bake instead.');
-            bake.readings = bake.readings.filter(function (x) { return x.id !== id; });
-            bake.startedAt = M.sortReadings(bake.readings)[0].t;
-            save(); closeSheet(); render(); toast('Deleted — recalculated.');
-            return;
-          }
-          if (act === 'esave') {
-            var num = function (sel) { var v = parseNum(sheet.querySelector(sel).value); return isNaN(v) ? null : v; };
-            var t = fromLocalInput(sheet.querySelector('#e-time').value);
-            if (t == null) return err('That time is not valid.');
-            var cand = { id: id, t: t, temp: num('#e-temp'), rise: num('#e-rise'), gapTemp: num('#e-gap') };
-            var v = M.validateReading(bake.readings, cand);
-            if (!v.ok) return err(v.message);
-            if (M.sortReadings(bake.readings)[0].id === id && cand.temp == null) return err('The first reading needs a temperature.');
-            var i = bake.readings.findIndex(function (x) { return x.id === id; });
-            bake.readings[i] = cand;
-            bake.startedAt = M.sortReadings(bake.readings)[0].t;
-            save(); closeSheet(); render(); toast('Recalculated from the first reading.');
-          }
-        });
-      });
+    if (!r || r.temp == null) return;
+    numberSheet({
+      title: 'Reading at ' + clock(r.t),
+      hint: 'Everything after it is recalculated from the first reading.',
+      value: r.temp, step: 0.5, min: M.TEMP_MIN, max: M.TEMP_MAX, unit: '°C',
+      onSave: function (v) {
+        var cand = { id: id, t: r.t, temp: v, rise: r.rise, gapTemp: r.gapTemp };
+        var ok = M.validateReading(bake.readings, cand);
+        if (!ok.ok) return err(ok.message);
+        var i = bake.readings.findIndex(function (x) { return x.id === id; });
+        bake.readings[i] = cand;
+        save(); closeSheet(); render(); toast('Recalculated.');
+      }
+    });
   }
 
-  function menuSheet() {
+  /* One sheet, because there was nowhere obvious for any of this to live and
+   * the code in particular was three taps deep inside something called Backup.
+   * It goes first here: it is the only setting you have to enter to get the
+   * app working across your phones, and the only one anyone hands to a friend. */
+  function settingsSheet() {
     var s = state.settings;
+    var on = !!syncState.code;
+    var n = state.bakes.length;
     openSheet(
-      '<h2>Bake &amp; alerts</h2>' +
-      '<div class="toggle"><div class="t">Alarm sound<em>Beeps at the lead time and again at the end.</em></div>' +
+      '<h2>Settings</h2>' +
+
+      '<div class="section-title">Your code</div>' +
+      '<p class="hint">' + (on
+        ? 'On. Your bakes are saved off this phone and appear on any device you type this code into.'
+        : 'Off. Bakes are saved on this phone only.') + '</p>' +
+      '<p class="hint">One code each. Someone baking with a different code has their own separate ' +
+      'bakes that never touch yours — that is how you give a friend an account. Never share yours: ' +
+      'two people on one code share a single set of bakes, including which one is running now. ' +
+      'Anyone who knows it can read your bakes, so make it long. At least ' + SYNC_MIN + ' characters.</p>' +
+      '<label class="field">Your private code' +
+      '<input id="synccode" type="text" inputmode="text" autocomplete="off" autocapitalize="none" ' +
+      'spellcheck="false" value="' + esc(syncState.code || '') + '" placeholder="your-own-long-phrase"></label>' +
+      /* err() writes here, so it has to exist before anything goes wrong. */
+      '<div class="err" id="sheeterr">' + esc(syncState.error || '') + '</div>' +
+      '<div class="row">' +
+      '<button class="btn primary" data-act="sync-save">' + (on ? 'Save' : 'Turn on') + '</button>' +
+      (on ? '<button class="btn ghost" data-act="sync-off">Turn off</button>' : '') + '</div>' +
+      (on && syncState.at ? '<p class="note">Last saved to the server ' + clock(syncState.at) + dayTag(syncState.at) + '.</p>' : '') +
+
+      '<div class="section-title">Alarm</div>' +
+      '<div class="toggle"><div class="t">Sound<em>Beeps when the bulk is ready.</em></div>' +
       '<button class="switch" role="switch" aria-checked="' + !!s.sound + '" data-act="t-sound"><i></i></button></div>' +
-      '<div class="toggle"><div class="t">Browser notification<em>' + notifyStatus() + '</em></div>' +
+      '<div class="toggle"><div class="t">Notification<em>' + notifyStatus() + '</em></div>' +
       '<button class="switch" role="switch" aria-checked="' + !!s.notify + '" data-act="t-notify"><i></i></button></div>' +
-      '<div class="toggle"><div class="t">Keep screen awake<em>' + ('wakeLock' in navigator ? 'Held while the live view is open.' : 'Not supported in this browser.') + '</em></div>' +
-      '<button class="switch" role="switch" aria-checked="' + !!s.wakeLock + '" data-act="t-wake"><i></i></button></div>' +
-      '<label class="field">Lead-time alert, minutes before preshape' +
-      '<input id="lead" type="number" inputmode="numeric" step="5" min="0" max="180" value="' + s.leadMin + '"></label>' +
       '<div class="spacer"></div>' +
       '<button class="btn small ghost" data-act="testalarm">Test the alarm</button>' +
-      '<div class="section-title">Night</div>' +
-      nightChoices() +
-      '<div class="section-title">Bake</div>' +
-      '<div class="toggle"><div class="t">Aliquot jar' +
-      '<em>' + (usesJar(activeBake()) ? 'Rise button and calibration are showing.' : 'Hidden. Temperature alone is driving the prediction.') + '</em></div>' +
-      '<button class="switch" role="switch" aria-checked="' + usesJar(activeBake()) + '" data-act="t-jar"><i></i></button></div>' +
-      (usesJar(activeBake()) ? '' : '<div class="spacer"></div><button class="btn small ghost" data-act="lograise-once">Log a one-off rise %</button>') +
+
+      '<div class="section-title">Your bakes</div>' +
+      '<p class="hint">' + n + ' bake' + (n === 1 ? '' : 's') + ' on this phone' +
+      (state.savedAt ? ', last saved ' + clock(state.savedAt) + dayTag(state.savedAt) : '') + '.' +
+      (storageBroken ? ' This browser is refusing to save — export a backup now.' : '') +
+      (recoveredFrom ? ' Running on ' + esc(recoveredFrom) + '; the main copy would not load.' : '') + '</p>' +
+      '<p class="hint">A backup file is the only thing that moves your bakes to a different web ' +
+      'address, since stored bakes do not follow one. Restoring merges: it adds what is missing ' +
+      'and never deletes what is here.</p>' +
       '<div class="spacer"></div>' +
-      '<button class="btn small ghost" data-act="history">History &amp; export</button>' +
+      '<button class="btn small ghost" data-act="backup-export">Export a backup</button>' +
       '<div class="spacer"></div>' +
-      '<button class="btn small ghost" data-act="storage">Backup and restore</button>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn small" data-act="finish">Finish this bake</button>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn small danger" data-act="abandon">Abandon this bake</button>',
+      '<button class="btn small ghost" data-act="backup-import">Restore from a backup</button>' +
+      installBlock() +
+
+      (activeBake()
+        ? '<div class="section-title">This bake</div>' +
+          '<button class="btn small danger" data-act="abandon">Abandon this bake</button>'
+        : ''),
       function (sheet) {
-        sheet.querySelector('#lead').addEventListener('change', function (e) {
-          state.settings.leadMin = M.clamp(parseInt(e.target.value, 10) || 0, 0, 180);
-          save(); syncAlerts(); toast('Alert set for ' + state.settings.leadMin + ' min before.');
-        });
         sheet.addEventListener('click', function (e) {
-          var act = e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
-          if (act === 't-sound') { s.sound = !s.sound; save(); menuSheet(); }
-          if (act === 't-jar') {
-            var b = activeBake();
-            b.useJar = !usesJar(b); s.useJar = b.useJar; save(); render(); menuSheet();
-          }
-          if (act === 'lograise-once') { logRise(); }
-          if (act === 't-wake') { s.wakeLock = !s.wakeLock; save(); menuSheet(); if (s.wakeLock) ensureWakeLock(); else releaseWakeLock(); }
+          var a = e.target.closest('[data-act]');
+          var act = a && a.dataset.act;
+          if (act === 't-sound') { s.sound = !s.sound; save(); settingsSheet(); }
           if (act === 't-notify') {
             if (!s.notify && 'Notification' in window) {
               Notification.requestPermission().then(function (p) {
-                s.notify = p === 'granted'; save(); menuSheet();
+                s.notify = p === 'granted'; save(); settingsSheet();
                 if (p !== 'granted') toast('Notifications are blocked in browser settings.');
               });
-            } else { s.notify = false; save(); menuSheet(); }
+            } else { s.notify = false; save(); settingsSheet(); }
           }
-          if (act === 'testalarm') { alarm('lead'); toast('That is the sound.'); }
-          if (act === 'finish') finishBake(false);
-          if (act === 'abandon') confirmSheet('Abandon this bake?', 'The readings are kept in history, but the bake stops here.', 'Abandon', function () { finishBake(true); });
+          if (act === 'testalarm') { alarm('end'); toast('That is the sound.'); }
+          if (act === 'backup-export') exportBackup();
+          if (act === 'backup-import') importBackup();
+          if (act === 'install' && installPrompt) {
+            installPrompt.prompt();
+            installPrompt = null;
+            closeSheet();
+          }
+          if (act === 'sync-off') {
+            saveSyncCode(null); syncState.at = 0; syncState.error = null;
+            closeSheet(); toast('Off. Nothing new leaves this phone.');
+          }
+          if (act === 'sync-save') {
+            var v = (sheet.querySelector('#synccode').value || '').trim();
+            if (v.length < SYNC_MIN) return err('At least ' + SYNC_MIN + ' characters.');
+            saveSyncCode(v);
+            syncState.error = null;
+            closeSheet();
+            toast('On. Saving this phone’s bakes.');
+            syncNow(true);
+          }
+          if (act === 'abandon') {
+            confirmSheet('Abandon this bake?', 'The bake stops here and the readings are kept.', 'Abandon',
+              function () { finishBake(true); });
+          }
         });
       });
   }
@@ -843,17 +642,18 @@
       });
   }
 
+  /* Finished bakes are kept, not deleted — there is nowhere in the app to look
+   * at them, but a mis-tap on the primary button must never be what destroys
+   * one, and sync needs them to still exist to agree about them. */
   function finishBake(abandoned) {
     var bake = activeBake();
     if (!bake) return;
-    var rep = M.replay(bake.readings);
     bake.finishedAt = Date.now();
-    bake.finalCal = rep.cal;
     bake.status = abandoned ? 'abandoned' : 'done';
     state.activeId = null;
     save(); closeSheet();
-    view = 'history'; openBakeId = bake.id; render();
-    toast(abandoned ? 'Bake abandoned.' : 'Bake finished — add the crumb result when you cut it.');
+    view = 'start'; render();
+    toast(abandoned ? 'Bake abandoned.' : 'Bulk finished. Go shape it.');
   }
 
   function startBake(form) {
@@ -865,11 +665,9 @@
     }
     var now = Date.now();
     var bake = {
-      id: uid(), name: (f.name.value || '').trim() || defaultName(),
-      notes: (f.notes.value || '').trim(), startedAt: now, status: 'active',
+      id: uid(), name: defaultName(), startedAt: now, status: 'active',
       readings: [{ id: uid(), t: now, temp: temp, rise: null, gapTemp: null }],
-      alerts: { lead: null, end: null }, crumb: '', finalCal: 1,
-      useJar: !!state.settings.useJar
+      alerts: { end: null }
     };
     state.bakes.push(bake); state.activeId = bake.id;
     save(); view = 'live'; render();
@@ -966,7 +764,7 @@
    * separate set the server never merges with it. Two people therefore get two
    * codes — one code between them would also share `activeId`, so starting a
    * bulk on one phone would move the other phone's live view onto it. The copy
-   * in syncSheet() says so, because the mistake is easy and silent. */
+   * in settingsSheet() says so, because the mistake is easy and silent. */
   var SYNC_KEY = 'bft.sync';
   var SYNC_MIN = 8;
   var syncState = { code: null, at: 0, error: null, busy: false };
@@ -1035,57 +833,6 @@
     });
   }
 
-  function syncSheet() {
-    var on = !!syncState.code;
-    openSheet(
-      '<h2>Your bakes, on any device</h2>' +
-      '<p class="hint">' + (on
-        ? 'On. Your bakes are copied to Cloudflare under your own code, and every device you type it into sees them.'
-        : 'Off. Bakes stay on this phone only.') + '</p>' +
-      '<p class="hint">Pick a code only you use. Someone baking with a different code has their own ' +
-      'separate set of bakes that never touches yours. It is the only thing protecting the data — ' +
-      'anyone who knows it can read your bakes — so make it long and unguessable, and do not ' +
-      'reuse a password. At least ' + SYNC_MIN + ' characters.</p>' +
-      '<label class="field">Your private code' +
-      '<input id="synccode" type="text" inputmode="text" autocomplete="off" autocapitalize="none" ' +
-      'spellcheck="false" value="' + esc(syncState.code || '') + '" placeholder="your-own-long-phrase"></label>' +
-      /* err() writes here, so it has to exist before anything goes wrong. */
-      '<div class="err" id="sheeterr">' + esc(syncState.error || '') + '</div>' +
-      (on && syncState.at ? '<p class="note">Last synced ' + clock(syncState.at) + dayTag(syncState.at) + '.</p>' : '') +
-      '<div class="row">' +
-      '<button class="btn ghost" data-act="cancel">Close</button>' +
-      '<button class="btn primary" data-act="sync-save">' + (on ? 'Save' : 'Turn on') + '</button></div>' +
-      (on ? '<div class="spacer"></div><button class="btn small ghost" data-act="sync-now">Sync now</button>' +
-        '<div class="spacer"></div><button class="btn small danger" data-act="sync-off">Turn sync off</button>' : '') +
-      '<div class="spacer"></div>' +
-      '<p class="note">Merging is the same as a restore: it adds what is missing and never deletes ' +
-      'what is here. Deleting a bake deletes it on every device using this code.</p>' +
-      '<p class="note">Baking alongside someone else? Give them their own code rather than this one. ' +
-      'Two people on one code share a single set of bakes, including which one is running now.</p>',
-      function (sheet) {
-        sheet.addEventListener('click', function (e) {
-          var a = e.target.closest('[data-act]');
-          if (!a) return;
-          if (a.dataset.act === 'cancel') return closeSheet();
-          if (a.dataset.act === 'sync-off') {
-            saveSyncCode(null); syncState.at = 0; syncState.error = null;
-            closeSheet(); toast('Sync off. Nothing new leaves this phone.');
-            return;
-          }
-          if (a.dataset.act === 'sync-now') { syncNow(true); return; }
-          if (a.dataset.act === 'sync-save') {
-            var v = (sheet.querySelector('#synccode').value || '').trim();
-            if (v.length < SYNC_MIN) return err('At least ' + SYNC_MIN + ' characters.');
-            saveSyncCode(v);
-            syncState.error = null;
-            closeSheet();
-            toast('Sync on. Pushing this phone’s bakes.');
-            syncNow(true);
-          }
-        });
-      });
-  }
-
   /* Installed to the Home Screen, iOS stops wiping this app's storage after
    * seven idle days — which is the single most useful thing anyone can do
    * about losing a bake, so it is said where the storage conversation is
@@ -1119,76 +866,6 @@
       (installPrompt ? '<div class="spacer"></div><button class="btn" data-act="install">Install on this phone</button>' : '');
   }
 
-  /* What the app can actually promise about your data, in plain words. */
-  function storageSheet() {
-    var n = state.bakes.length;
-    openSheet(
-      '<h2>Your bakes</h2>' +
-      '<p class="hint">' + n + ' bake' + (n === 1 ? '' : 's') + ' stored in this browser' +
-      (state.savedAt ? ', last saved ' + clock(state.savedAt) + dayTag(state.savedAt) : '') + '.</p>' +
-      (storageBroken
-        ? '<p class="hint" style="color:var(--danger)">This browser is refusing to save. ' +
-          'Export a backup now — nothing logged since you opened the app is being kept.</p>' : '') +
-      (recoveredFrom ? '<p class="hint">Running on ' + esc(recoveredFrom) + ' — the main copy would not load.</p>' : '') +
-      '<p class="hint">Bakes live in this browser, on this address. A different URL, a different ' +
-      'browser, or the Home Screen icon beside a Safari tab each keep their own. A backup file is ' +
-      'the only thing that moves between them.</p>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn" data-act="backup-export">Export a backup</button>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn ghost" data-act="backup-import">Restore from a backup</button>' +
-      '<div class="spacer"></div>' +
-      '<p class="note">Restoring merges — it adds what is missing and never deletes what is here.</p>' +
-      '<div class="section-title">Sync</div>' +
-      '<p class="hint">' + (syncState.code
-        ? 'On. Your bakes are kept under your private code and follow you to any device you type it into.'
-        : 'Off. A backup file is a copy you have to remember to take; sync is one you do not.') + '</p>' +
-      '<div class="spacer"></div>' +
-      '<button class="btn ghost" data-act="sync">' + (syncState.code ? 'Sync settings' : 'Set up sync') + '</button>' +
-      installBlock(),
-      function (sheet) {
-        sheet.addEventListener('click', function (e) {
-          var a = e.target.closest('[data-act]');
-          if (!a) return;
-          if (a.dataset.act === 'backup-export') exportBackup();
-          if (a.dataset.act === 'backup-import') importBackup();
-          if (a.dataset.act === 'sync') { closeSheet(); syncSheet(); return; }
-          if (a.dataset.act === 'install' && installPrompt) {
-            installPrompt.prompt();
-            installPrompt = null;
-            closeSheet();
-          }
-        });
-      });
-  }
-
-  // ---------------------------------------------------------------- CSV
-  function exportCSV() {
-    var rows = [['bake_id', 'bake_name', 'status', 'started_at', 'notes', 'crumb', 'final_calibration',
-      'reading_at', 'hours_in', 'dough_temp_c', 'gap_temp_c', 'observed_rise_pct',
-      'progress_pct', 'target_rise_pct', 'modelled_rise_pct', 'calibration_at_reading']];
-    state.bakes.slice().sort(function (a, b) { return a.startedAt - b.startedAt; }).forEach(function (b) {
-      var rep = M.replay(b.readings);
-      rep.points.forEach(function (p) {
-        rows.push([b.id, b.name, b.status || 'active', new Date(b.startedAt).toISOString(), b.notes || '', b.crumb || '',
-          round(rep.cal, 3), new Date(p.t).toISOString(), round((p.t - b.startedAt) / H, 3),
-          p.temp == null ? '' : round(p.temp, 2), p.gapTemp == null ? '' : p.gapTemp,
-          p.rise == null ? '' : p.rise, round(p.progress * 100, 2),
-          p.target == null ? '' : round(p.target, 2), p.modeledRise == null ? '' : round(p.modeledRise, 2),
-          round(p.cal, 3)]);
-      });
-    });
-    var csv = rows.map(function (r) {
-      return r.map(function (c) {
-        c = String(c);
-        return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c;
-      }).join(',');
-    }).join('\n');
-    download(csv, 'bulk-ferment-' + new Date().toISOString().slice(0, 10) + '.csv', 'text/csv');
-    toast('Exported ' + (rows.length - 1) + ' readings.');
-  }
-  function round(v, n) { var p = Math.pow(10, n); return Math.round(v * p) / p; }
-
   // -------------------------------------------------------------- alerts
   var timers = [];
   function clearTimers() { timers.forEach(clearTimeout); timers = []; }
@@ -1202,39 +879,28 @@
     timers.push(setTimeout(function () { syncAlerts(); }, Math.min(at - Date.now(), 2147483000) + 500));
   }
 
+  /* One alarm, when the bulk is ready. A configurable heads-up was a number to
+   * choose before you could use the app, for a warning you get by looking. */
   function syncBulkAlerts() {
     var bake = activeBake();
     if (!bake || !bake.readings.length) return;
     var now = Date.now();
     var st = M.stateAt(bake.readings, now);
     if (st.empty) return;
-    bake.alerts = bake.alerts || { lead: null, end: null };
-    var targets = {
-      lead: st.predictedEnd - state.settings.leadMin * 60000,
-      end: st.predictedEnd
-    };
-    Object.keys(targets).forEach(function (kind) {
-      var at = targets[kind];
-      if (kind === 'lead' && state.settings.leadMin <= 0) return;
-      if (now >= at) { maybeFire(bake, kind, at, st); return; }
-      later(at);
-    });
+    bake.alerts = bake.alerts || { end: null };
+    if (now >= st.predictedEnd) maybeFire(bake, st.predictedEnd);
+    else later(st.predictedEnd);
   }
 
   /* Fired state is remembered against the time it fired for, so a moving
    * prediction re-arms the alert only if it moves materially (>15 min) later. */
-  function maybeFire(bake, kind, at, st) {
-    var prev = bake.alerts[kind];
+  function maybeFire(bake, at) {
+    var prev = bake.alerts.end;
     if (prev != null && at - prev < 15 * 60000) return;
-    bake.alerts[kind] = at; save();
-    var title = kind === 'lead'
-      ? state.settings.leadMin + ' minutes to preshape'
-      : 'Ready — go read the dough.';
-    var body = kind === 'lead'
-      ? esc(bake.name) + ' — ' + Math.round(st.progress * 100) + '% through at ' + n1(st.currentTemp) + '°C. Preshape around ' + clock(st.predictedEnd) + '.'
-      : 'Domed, jiggly, bubbles at the edges. The dough decides.';
-    alarm(kind);
-    notify(title, body.replace(/&amp;/g, '&'));
+    bake.alerts.end = at; save();
+    var title = 'Ready — go read the dough.';
+    alarm();
+    notify(title, 'Domed, jiggly, bubbles at the edges. The dough decides.');
     toast(title);
   }
 
@@ -1245,12 +911,11 @@
       if (actx.state === 'suspended') actx.resume();
     } catch (e) { /* no audio available */ }
   }
-  function alarm(kind) {
+  function alarm() {
     if (!state.settings.sound) return;
     unlockAudio();
     if (!actx) return;
-    var beeps = kind === 'end' ? 6 : 3;
-    var freq = kind === 'end' ? 940 : 680;
+    var beeps = 6, freq = 940;
     for (var i = 0; i < beeps; i++) {
       var t0 = actx.currentTime + i * 0.42;
       var o = actx.createOscillator(), g = actx.createGain();
@@ -1269,30 +934,12 @@
     catch (e) { /* some browsers require a service worker; the alarm still sounds */ }
   }
 
-  // ------------------------------------------------------------ wake lock
-  var wl = null;
-  function ensureWakeLock() {
-    if (!state.settings.wakeLock || !('wakeLock' in navigator) || wl || document.hidden) return;
-    navigator.wakeLock.request('screen').then(function (lock) {
-      wl = lock;
-      lock.addEventListener('release', function () { wl = null; });
-    }).catch(function () { /* denied or unsupported — not worth interrupting for */ });
-  }
-  function releaseWakeLock() { if (wl) { try { wl.release(); } catch (e) {} wl = null; } }
-
   // ------------------------------------------------------------- binding
   function bindAll(root) {
     root.querySelectorAll('[data-act]').forEach(function (el) {
       if (el.dataset.bound) return;
       el.dataset.bound = '1';
       var act = el.dataset.act;
-      if (act === 'crumb') {
-        el.addEventListener('change', function () {
-          var b = state.bakes.filter(function (x) { return x.id === el.dataset.id; })[0];
-          if (b) { b.crumb = el.value; save(); toast('Crumb note saved.'); }
-        });
-        return;
-      }
       el.addEventListener('click', function () { dispatch(act, el.dataset.id, el); });
     });
     var form = root.querySelector('#startform');
@@ -1302,56 +949,16 @@
     }
   }
 
-  function dispatch(act, id, el) {
+  function dispatch(act, id) {
     switch (act) {
       case 'logtemp': unlockAudio(); logTemp(); break;
-      case 'lograise': unlockAudio(); logRise(); break;
       case 'edit': editReading(id); break;
-      case 'menu': menuSheet(); break;
-      case 't-jar-start':
-        /* toggled in place — re-rendering here would wipe what is typed above */
-        state.settings.useJar = el.getAttribute('aria-checked') !== 'true';
-        el.setAttribute('aria-checked', state.settings.useJar);
-        save();
-        break;
-      case 'history': closeSheet(); view = 'history'; render(); break;
-      /* Home and Back are the same destination now: whatever is in front of
-       * you. There is nowhere else for the app to be. */
-      case 'home':
-      case 'back':
-        closeSheet();
-        view = state.activeId ? 'live' : 'start';
-        openBakeId = null; render(); break;
-
-      case 'storage': closeSheet(); storageSheet(); break;
-      case 'sync': closeSheet(); syncSheet(); break;
-      case 'csv': exportCSV(); break;
-      case 'openbake': openBakeId = id; render(); break;
-      case 'closebake': openBakeId = null; render(); break;
-      case 'delbake':
-        confirmSheet('Delete this bake?', 'The readings and crumb note go with it. This cannot be undone.', 'Delete', function () {
-          state.bakes = state.bakes.filter(function (b) { return b.id !== id; });
-          /* A tombstone, so the other phone does not sync it straight back. */
-          state.deleted[id] = Date.now();
-          if (state.activeId === id) state.activeId = null;
-          openBakeId = null; save(); render(); toast('Deleted.');
-        });
-        break;
-      case 'resetcal':
-        confirmSheet('Reset calibration to 1.0?', 'The jar readings stay on the chart, but they stop steering the projection until you log a new one.', 'Reset', function () {
-          var bake = activeBake();
-          bake.readings.forEach(function (r) { if (r.rise != null) r.ignoreCal = true; });
-          save(); render(); toast('Back to the table.');
-        });
-        break;
-      case 'night':
-        state.settings.night = id; save();
-        var open = document.querySelector('#sheet-root .sheet');
-        if (open) open.querySelectorAll('[data-act="night"]').forEach(function (b) {
-          b.setAttribute('aria-pressed', b.dataset.id === id);
-        });
-        render();
-        toast(id === 'auto' ? 'Night switches itself on at 23:00.' : id === 'on' ? 'Night on.' : 'Day on.');
+      case 'menu': closeSheet(); settingsSheet(); break;
+      case 'finish':
+        /* Invariant 4: only ever an explicit tap, and the primary button on the
+         * live view is a big one, so it asks before it ends the bulk. */
+        confirmSheet('Finish this bulk?', 'The clock stops and you go back to the start screen.',
+          'Finish', function () { finishBake(false); });
         break;
     }
   }
@@ -1364,8 +971,7 @@
   }
   setInterval(tick, 15000);
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden) { render(); ensureWakeLock(); syncNow(false); }
-    else releaseWakeLock();
+    if (!document.hidden) { render(); syncNow(false); }
   });
   window.addEventListener('focus', function () { if (view === 'live') render(); });
   window.addEventListener('pageshow', function () { render(); });

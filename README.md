@@ -5,9 +5,13 @@ far along the bulk actually is. You enter dough temperatures by hand from a
 probe; it accumulates fermentation progress and keeps re-predicting when you
 need to be at the bench.
 
-That is the whole app. Recipe templates, the stage-by-stage full bake and the
-reverse planner were removed — they are in the git history if they are ever
-wanted back.
+That is the whole app, and deliberately so. Recipe templates, the
+stage-by-stage full bake and the reverse planner went in v3; the aliquot jar,
+the chart, the history screen, the CSV export and most of the settings went in
+v4. All of it is in the git history if it is ever wanted back.
+
+What is left: start a loaf, see when it will be ready, get pinged, do not lose
+it, one code each.
 
 ## Deploy
 
@@ -84,24 +88,26 @@ fitted from it at load, and the fit is printed to the console.
   time already spent warm is never given back.
 * `predictedEnd = now + (1 − progress) / r(currentTemp)`.
 * Target rise % is read off the *current* temperature, fitted the same way.
-* Aliquot jar readings produce a calibration factor, clamped to 0.6–1.6 and
-  damped 50% toward each new value, applied to rates after that reading.
 
-The jar is optional, per bake — there is a toggle on the start screen and in the
-live view's menu. With it off, the rise button, the calibration line and the jar
-legend disappear; temperature alone drives the prediction and nothing about the
-model changes.
+The model still carries `targetRisePct()` and the aliquot-jar calibration
+factor, and still honours a `rise` on an old reading. The UI stopped showing
+either in v4: temperature alone drives the prediction, and with no rise
+readings the calibration factor stays at 1.
 
 ## UI — `app.js`
 
-Three screens: the start form, the live view, and history. Opening the app lands
-you on the bulk you are running, or on the form that starts one.
+Two screens and no nav. Opening the app lands you on the bulk you are running,
+or on the one field that starts one. Settings — your code, the alarm, the
+backup — are one tap behind the `•••` on either screen.
 
 Every number is recomputed from stored timestamps against `Date.now()`, never
 from a running timer, so a backgrounded tab or a slept phone changes nothing.
-Editing a reading replays the whole bake from the first one rather than patching
-it, and calibration stays causal: a factor learned at reading *k* only affects
-intervals after *k*.
+Fixing a reading replays the whole bake from the first one rather than patching
+it.
+
+Finishing is always an explicit tap, and it is the only primary button on the
+live view. A finished bake is kept rather than deleted — a mis-tap must not be
+what destroys one — there is simply nowhere in the app to look at it.
 
 Temperatures are typed on a big keypad, or on the phone's own keyboard. Both
 `23.5` and `23,5` mean the same thing — every number the app reads goes through
