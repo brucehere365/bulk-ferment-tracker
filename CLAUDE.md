@@ -12,13 +12,25 @@ is no build step, no CI, and no `wrangler.toml` — the repo root is served as-i
 
 Remote: `https://github.com/brucehere365/bulk-ferment-tracker.git`
 
-**The repo is connected as a Cloudflare _Pages_ project.** It was Workers Builds
-until September 2026, which failed its check on every commit and never ran
-`functions/`; that is done and the old red check is gone. Still do not add a
-`wrangler.toml` — Pages serves the repo root as-is and does not want one.
+**The repo is connected as a Cloudflare _Pages_ project**, added September 2026.
+Pages is what serves the site and what runs `functions/`; its check is green and
+it publishes a preview URL per branch.
 
-The move changed the origin, and `localStorage` does not follow an origin, so
-bakes left on the old Workers URL are not visible on the new one. They are not
+⚠️ **Workers Builds was never disconnected, so both integrations are live** and
+every commit still gets one red `Workers Builds: bulk-ferment-tracker` check
+beside the green `Cloudflare Pages` one. It fails instantly — PR #3 recorded
+`started_at == completed_at == 05:55:30`, PR #2 the same at `08:11:37` on a
+wholly unrelated diff — because Workers Builds wants a `wrangler` config this
+repo does not and should not have.
+
+**That red check is not yours. Do not try to fix it in the repo**, and above all
+do not add a `wrangler.toml`: it would make Workers Builds pass by turning the
+project into something Pages should not serve. The fix is one dashboard action —
+disconnect Workers Builds from the repo — and until someone does it, judge CI by
+the Pages check alone.
+
+Moving to Pages changed the origin, and `localStorage` does not follow an origin,
+so bakes left on the old Workers URL are not visible on the new one. They are not
 gone: export a JSON backup from the old address and restore it here. See the
 storage section.
 
