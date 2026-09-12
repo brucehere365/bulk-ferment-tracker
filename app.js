@@ -6,6 +6,7 @@
   'use strict';
 
   var M = window.BFModel;
+  var H = M.MS_PER_HOUR;
   var KEY = 'bft.v1';
   var PREV = 'bft.v1.prev';       // the write before the current one
   var QUAR = 'bft.v1.corrupt';    // a payload that would not parse, kept rather than dropped
@@ -219,6 +220,105 @@
     toastTimer = setTimeout(function () { el.classList.remove('on'); }, 2600);
   }
 
+  // --------------------------------------------------------------- chart
+  function chartSVG(readings, now, opts) {
+    opts = opts || {};
+    var ser = M.buildSeries(readings, now);
+    if (!ser) return '<div class="chart-empty">No readings yet.</div>';
+    var st = ser.state;
+    var W = 360, HT = 236, padL = 34, padR = 34, padT = 14, padB = 26;
+    var t0 = ser.history[0].t;
+    var tEnd = opts.historic ? now : Math.max(now, st.predictedEnd);
+    var span = Math.max(tEnd - t0, 45 * 60000);
+    tEnd = t0 + span * 1.04;
+    span = tEnd - t0;
+    var X = function (t) { return padL + (t - t0) / span * (W - padL - padR); };
+
+    var riseVals = ser.history.map(function (p) { return p.rise; })
+      .concat(ser.observed.map(function (o) { return o.rise; }), [st.target, st.expectedRise, 10]);
+    var yMax = Math.max.apply(null, riseVals) * 1.14;
+    var Y = function (v) { return HT - padB - (v / yMax) * (HT - padB - padT); };
+
+    var temps = ser.history.map(function (p) { return p.temp; });
+    var tMin = Math.min.apply(null, temps), tMax = Math.max.apply(null, temps);
+    if (tMax - tMin < 3) { var mid = (tMin + tMax) / 2; tMin = mid - 1.6; tMax = mid + 1.6; }
+    else { var pd = (tMax - tMin) * 0.3; tMin -= pd; tMax += pd; }
+    var Y2 = function (v) { return HT - padB - ((v - tMin) / (tMax - tMin)) * (HT - padB - padT); };
+
+    function path(pts, acc) {
+      return pts.map(function (p, i) { return (i ? 'L' : 'M') + X(p.t).toFixed(1) + ' ' + acc(p).toFixed(1); }).join(' ');
+    }
+    var s = [];
+    s.push('<svg viewBox="0 0 ' + W + ' ' + HT + '" role="img" aria-label="Rise and temperature over time">');
+
+    // rise gridlines + left axis
+    var rStep = yMax <= 45 ? 10 : yMax <= 90 ? 20 : yMax <= 140 ? 25 : 50;
+    for (var v = 0; v <= yMax; v += rStep) {
+      s.push('<line x1="' + padL + '" y1="' + Y(v).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(v).toFixed(1) + '" class="c-grid" stroke-width="1"/>');
+      s.push('<text x="' + (padL - 5) + '" y="' + (Y(v) + 3.5).toFixed(1) + '" class="c-axis" font-size="9.5" text-anchor="end">' + v + '</text>');
+    }
+    // time ticks
+    var hSpan = span / H;
+    var stepH = [0.5, 1, 2, 3, 4, 6, 8, 12].filter(function (x) { return hSpan / x <= 6; })[0] || 24;
+    var base = new Date(t0); base.setMinutes(0, 0, 0);
+    for (var t = base.getTime(); t <= tEnd; t += stepH * H) {
+      if (t < t0) continue;
+      s.push('<line x1="' + X(t).toFixed(1) + '" y1="' + padT + '" x2="' + X(t).toFixed(1) + '" y2="' + (HT - padB) + '" class="c-vgrid" stroke-width="1"/>');
+      s.push('<text x="' + X(t).toFixed(1) + '" y="' + (HT - padB + 13) + '" class="c-axis" font-size="9.5" text-anchor="middle">' + clock(t) + '</text>');
+    }
+
+    // target band — moves vertically with the current temperature
+    var bandLo = Y(st.target * 1.04), bandHi = Y(st.target * 0.96);
+    s.push('<rect x="' + padL + '" y="' + bandLo.toFixed(1) + '" width="' + (W - padL - padR) + '" height="' + Math.max(3, bandHi - bandLo).toFixed(1) + '" class="c-band"/>');
+    s.push('<line x1="' + padL + '" y1="' + Y(st.target).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(st.target).toFixed(1) + '" class="c-target" stroke-width="1" stroke-dasharray="3 5"/>');
+    s.push('<text x="' + (padL + 3) + '" y="' + (Y(st.target) - 4).toFixed(1) + '" class="c-target-text" font-size="9.5">target ' + Math.round(st.target) + '%</text>');
+
+    // temperature, right axis — subdued context
+    s.push('<path d="' + path(ser.history, function (p) { return Y2(p.temp); }) + '" fill="none" class="c-temp" stroke-width="1.2" stroke-linejoin="round"/>');
+    ser.tempMarks.forEach(function (m) {
+      s.push('<rect x="' + (X(m.t) - 2).toFixed(1) + '" y="' + (Y2(m.temp) - 2).toFixed(1) + '" width="4" height="4" class="c-temp-mark"/>');
+    });
+    [tMin + (tMax - tMin) * 0.12, (tMin + tMax) / 2, tMax - (tMax - tMin) * 0.12].forEach(function (tv) {
+      s.push('<text x="' + (W - padR + 4) + '" y="' + (Y2(tv) + 3.5).toFixed(1) + '" class="c-temp-axis" font-size="9.5">' + n1(Math.round(tv * 2) / 2) + '°</text>');
+    });
+
+    // modelled rise so far
+    s.push('<path d="' + path(ser.history, function (p) { return Y(p.rise); }) + '" fill="none" class="c-rise" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>');
+
+    // projection
+    if (ser.projection.length && !opts.historic) {
+      s.push('<path d="' + path(ser.projection, function (p) { return Y(p.rise); }) + '" fill="none" class="c-proj" stroke-width="2" stroke-dasharray="4 6" stroke-linecap="round"/>');
+    }
+
+    // jar readings
+    ser.observed.forEach(function (o) {
+      s.push('<circle cx="' + X(o.t).toFixed(1) + '" cy="' + Y(o.rise).toFixed(1) + '" r="4.6" class="c-jar" stroke-width="2.2"/>');
+    });
+
+    // now
+    s.push('<line x1="' + X(now).toFixed(1) + '" y1="' + padT + '" x2="' + X(now).toFixed(1) + '" y2="' + (HT - padB) + '" class="c-now" stroke-width="1" stroke-dasharray="2 3"/>');
+    s.push('<text x="' + X(now).toFixed(1) + '" y="' + (padT - 4) + '" class="c-now-text" font-size="9.5" text-anchor="' + (opts.historic ? 'end' : 'middle') + '">' + (opts.historic ? 'end' : 'now') + '</text>');
+
+    // predicted end
+    if (st.predictedEnd >= t0 && st.predictedEnd <= tEnd) {
+      var xe = X(st.predictedEnd), ye = Y(st.target);
+      s.push('<line x1="' + xe.toFixed(1) + '" y1="' + ye.toFixed(1) + '" x2="' + xe.toFixed(1) + '" y2="' + (HT - padB) + '" class="c-end" stroke-width="1"/>');
+      s.push('<circle cx="' + xe.toFixed(1) + '" cy="' + ye.toFixed(1) + '" r="4" class="c-end-dot"/>');
+      var right = xe > W * 0.6;
+      s.push('<text x="' + (right ? xe - 6 : xe + 6).toFixed(1) + '" y="' + (ye + 15).toFixed(1) + '" class="c-end-text" font-size="10.5" text-anchor="' + (right ? 'end' : 'start') + '">' + clock(st.predictedEnd) + '</text>');
+    }
+    s.push('</svg>');
+
+    return '<div class="chartwrap">' + s.join('') +
+      '<div class="legend">' +
+      '<span><i style="border-color:var(--ink)"></i>rise %</span>' +
+      (opts.historic ? '' : '<span><i style="border-color:var(--muted-2);border-top-style:dashed"></i>projected</span>') +
+      (ser.observed.length ? '<span><i style="border:2px solid var(--accent);border-radius:50%;width:8px;height:8px;vertical-align:-1px"></i>jar reading</span>' : '') +
+      '<span><i style="border-color:var(--temp-line)"></i>dough temp</span>' +
+      '</div></div>';
+  }
+
+
   var view = 'start';
   var lastView = null;
 
@@ -325,7 +425,15 @@
       '<div class="progressbar' + (st.ready ? ' ready' : '') + '"><i style="width:' + pct + '%"></i></div></div>' +
       '<div class="stat"><div class="k">Dough temp</div><div class="v">' + n1(st.currentTemp) + '<small>°C</small></div>' +
       (st.extrapolated ? '<span class="flag">outside the table</span>' : '<div class="k" style="margin-top:8px">as of ' + clock(lastTempAt(bake)) + '</div>') + '</div>' +
+      /* Both of these come from temperature and progress alone — no jar, nothing
+       * to log. They are what you hold the bowl up against: the dough should be
+       * about this far up now, and this far up when it is done. */
+      '<div class="stat"><div class="k">Risen by now</div><div class="v">' + Math.round(st.expectedRise) + '<small>%</small></div>' +
+      '<div class="k" style="margin-top:8px">what the bowl should show</div></div>' +
+      '<div class="stat"><div class="k">Risen when ready</div><div class="v">' + Math.round(st.target) + '<small>%</small></div>' +
+      '<div class="k" style="margin-top:8px">at ' + n1(st.currentTemp) + '°C</div></div>' +
       '</div>' +
+      chartSVG(bake.readings, now) +
       (st.gapPending ? '<p class="note center">No reading for ' + dur(st.sinceLastMs) + ' — the next entry will ask what happened in between.</p>' : '') +
       /* Invariant 4: the bulk never ends itself. The tap that ends it is the
        * primary button and the only one, because deciding the dough is done is
@@ -527,6 +635,48 @@
         save(); closeSheet(); render(); toast('Recalculated.');
       }
     });
+  }
+
+  /* Asked once, on a genuinely fresh install, because handing someone a link
+   * and a code only works if the app they open actually asks for the code.
+   * Skippable in one tap: sync is optional and the app is fully usable without
+   * it, so this must never be a gate in front of starting a bulk. */
+  function firstRunSheet() {
+    openSheet(
+      '<h2>Do you have a code?</h2>' +
+      '<p class="hint">A code keeps your bakes off this phone as well as on it, so they are ' +
+      'still here on another device — or if this browser forgets them. If someone gave you ' +
+      'one, type it in.</p>' +
+      '<p class="hint">One code each. A different code is a completely separate set of bakes, ' +
+      'so yours and theirs never mix. Anyone who knows a code can read those bakes, so make ' +
+      'it long — at least ' + SYNC_MIN + ' characters.</p>' +
+      '<label class="field">Your private code' +
+      '<input id="synccode" type="text" inputmode="text" autocomplete="off" autocapitalize="none" ' +
+      'spellcheck="false" placeholder="your-own-long-phrase"></label>' +
+      '<div class="err" id="sheeterr"></div>' +
+      '<div class="row">' +
+      '<button class="btn ghost" data-act="firstrun-skip">Just this phone</button>' +
+      '<button class="btn primary" data-act="firstrun-save">Turn on</button></div>' +
+      '<div class="spacer"></div>' +
+      '<p class="note">You can change this later under Settings.</p>',
+      function (sheet) {
+        sheet.addEventListener('click', function (e) {
+          var a = e.target.closest('[data-act]');
+          var act = a && a.dataset.act;
+          if (act === 'firstrun-skip') {
+            syncState.asked = true; writeSync(); closeSheet();
+            toast('Bakes stay on this phone. Settings can change that.');
+          }
+          if (act === 'firstrun-save') {
+            var v = (sheet.querySelector('#synccode').value || '').trim();
+            if (v.length < SYNC_MIN) return err('At least ' + SYNC_MIN + ' characters.');
+            saveSyncCode(v);
+            closeSheet();
+            toast('On. Your bakes are saved under that code.');
+            syncNow(true);
+          }
+        });
+      });
   }
 
   /* One sheet, because there was nowhere obvious for any of this to live and
@@ -767,18 +917,28 @@
    * in settingsSheet() says so, because the mistake is easy and silent. */
   var SYNC_KEY = 'bft.sync';
   var SYNC_MIN = 8;
-  var syncState = { code: null, at: 0, error: null, busy: false };
+  var syncState = { code: null, at: 0, error: null, busy: false, asked: false };
   try {
-    var rawSync = localStorage.getItem(SYNC_KEY);
-    if (rawSync) syncState.code = JSON.parse(rawSync).code || null;
+    var rawSync = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null');
+    if (rawSync) {
+      syncState.code = rawSync.code || null;
+      syncState.asked = !!rawSync.asked;
+    }
   } catch (e) { /* no sync configured */ }
 
+  /* `asked` outlives a cleared code on purpose: turning sync off is an answer,
+   * and the first-run sheet must not come back and ask again. */
+  function writeSync() {
+    try {
+      if (syncState.code || syncState.asked) {
+        localStorage.setItem(SYNC_KEY, JSON.stringify({ code: syncState.code, asked: syncState.asked }));
+      } else { localStorage.removeItem(SYNC_KEY); }
+    } catch (e) { /* the code is a convenience; losing it costs one retype */ }
+  }
   function saveSyncCode(code) {
     syncState.code = code || null;
-    try {
-      if (code) localStorage.setItem(SYNC_KEY, JSON.stringify({ code: code }));
-      else localStorage.removeItem(SYNC_KEY);
-    } catch (e) { /* the code is a convenience; losing it costs one retype */ }
+    syncState.asked = true;
+    writeSync();
   }
 
   var syncTimer = null;
@@ -1003,4 +1163,9 @@
   recoverFromMirror();
   syncNow(false);
   if (recoveredFrom) toast('The main saved copy would not load — running on ' + recoveredFrom + '.');
+
+  /* Only on a truly fresh install: nothing stored, nothing running, and never
+   * answered before. An install that already has bakes has been in use, and
+   * interrupting that with a modal would be the app nagging rather than asking. */
+  if (bootedEmpty && !syncState.code && !syncState.asked && !state.bakes.length) firstRunSheet();
 })();

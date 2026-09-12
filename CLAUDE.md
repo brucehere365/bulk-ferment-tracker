@@ -172,16 +172,30 @@ anyone makes:
 * `settingsSheet()` — the code, the alarm, the backup. Reachable in one tap
   from the `•••` on **both** screens, because the screen you are on when a bake
   has gone missing is the screen the backup has to be reachable from.
+* `firstRunSheet()` — asked once on a genuinely fresh install (`bootedEmpty`, no
+  code, never answered, no bakes). Handing someone a link and a code only works
+  if the app they open asks for the code. It is skippable in one tap and the
+  answer is remembered in `bft.sync` as `asked`, which outlives a cleared code:
+  turning sync off is an answer, and a modal that returns every launch until you
+  give in is nagging, not asking. Never make it a gate in front of starting a
+  bulk.
 
 **v3 removed recipe templates, the stage-by-stage full bake, and the forward and
 reverse planners**, along with `process.js` and `process.tests.js`.
 
-**v4 removed the rest of the second app**: the aliquot jar and everything only a
-jar reading could feed (rise logging, the calibration factor on screen, the
-one-off rise, the reset), the chart, the History screen and its bake cards, the
-CSV export, the crumb note, the nav pill, the screen-wake toggle, the Day/Night
-pins, the configurable lead-time alert, the bake name and notes fields, and the
-separate `syncSheet()` and `storageSheet()`.
+**v4 removed the rest of the second app**: the aliquot jar *input* side (rise
+logging, the calibration factor on screen, the one-off rise, the reset), the
+History screen and its bake cards, the CSV export, the crumb note, the nav pill,
+the screen-wake toggle, the Day/Night pins, the configurable lead-time alert,
+the bake name and notes fields, and the separate `syncSheet()` and
+`storageSheet()`.
+
+**Rise % and the chart are not part of that and must stay.** The first cut took
+them out with the jar and it was wrong: `st.expectedRise` and `st.target` come
+from temperature and progress alone — no jar, nothing to log — and they are what
+the baker holds the bowl up against. The chart has no controls either. What made
+this app confusing was *things to decide and tap*, not things to read. Weigh any
+future cut on that line: information stays, decisions go.
 
 Both were deliberate, and the second was asked for in those words: *"it feels
 way too complex and I don't even understand what you've built."* **Do not
@@ -201,9 +215,10 @@ reads a `rise` if one is there, so a v3 install loses nothing by upgrading.
 
 1. **`model.js` is the fermentation model and nothing else may predict a bulk.**
    Bulk length is always `BFModel.hoursAt(T)` = `1 / r(T)` from the fitted curve.
-   Never hardcode a duration. `targetRisePct(T)` and the calibration factor are
-   still in the model and still correct — the UI simply stopped showing them
-   when the jar went, and `cal` stays at 1 with no rise readings to learn from.
+   Never hardcode a duration, and never write "doubled" as a target — target
+   rise comes from `targetRisePct(T)`, which falls as temperature rises. The
+   calibration factor is still in the model and still correct; with no rise
+   readings to learn from it simply stays at 1.
 2. **Nothing is derived from a running timer.** Every number on screen is
    recomputed from stored timestamps plus `Date.now()`. A backgrounded tab, a
    slept phone or a reload must change nothing. `ui.tests.js` asserts this with
@@ -217,8 +232,8 @@ reads a `rise` if one is there, so a v3 install loses nothing by upgrading.
    implementation detail.
 5. **Entrance animations are gated behind `#app.enter`.** The live view
    re-renders from stored timestamps on a tick (invariant 2), so any unguarded
-   entrance animation restarts every time — the hero would pulse, the progress
-   bar would sweep from zero. `render()` adds `enter` only when the view
+   entrance animation restarts every time — the hero would pulse, the chart
+   would redraw itself, the progress bar would sweep from zero. `render()` adds `enter` only when the view
    actually changes. Anything that animates on arrival goes under that selector.
 6. **Cue lists are instructions, not a checklist.** Small print you read before
    you decide. Nothing to tick — and the tap that ends the bulk is the primary
@@ -280,7 +295,7 @@ legitimate pinch-zoom. `touch-action` is the fix.
 
     node tests.js        # fermentation model — 56 assertions
     node sync.tests.js   # the real Pages Function against a fake KV — 25
-    node ui.tests.js     # real DOM driven by clicks — 109 (needs: npm i jsdom)
+    node ui.tests.js     # real DOM driven by clicks — 117 (needs: npm i jsdom)
 
 Run all three before pushing, since a push deploys.
 

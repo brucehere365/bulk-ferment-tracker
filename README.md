@@ -6,8 +6,8 @@ probe; it accumulates fermentation progress and keeps re-predicting when you
 need to be at the bench.
 
 That is the whole app, and deliberately so. Recipe templates, the
-stage-by-stage full bake and the reverse planner went in v3; the aliquot jar,
-the chart, the history screen, the CSV export and most of the settings went in
+stage-by-stage full bake and the reverse planner went in v3; logging aliquot-jar
+readings, the history screen, the CSV export and most of the settings went in
 v4. All of it is in the git history if it is ever wanted back.
 
 What is left: start a loaf, see when it will be ready, get pinged, do not lose
@@ -89,15 +89,17 @@ fitted from it at load, and the fit is printed to the console.
 * `predictedEnd = now + (1 − progress) / r(currentTemp)`.
 * Target rise % is read off the *current* temperature, fitted the same way.
 
-The model still carries `targetRisePct()` and the aliquot-jar calibration
-factor, and still honours a `rise` on an old reading. The UI stopped showing
-either in v4: temperature alone drives the prediction, and with no rise
-readings the calibration factor stays at 1.
+Both rise numbers on the live view — what the bowl should show now, and what it
+should show when the bulk is done — come from temperature and progress alone.
+There is no jar to keep and nothing to log. The calibration factor is still in
+the model and still honours a `rise` on an old reading; with none to learn from
+it stays at 1.
 
 ## UI — `app.js`
 
 Two screens and no nav. Opening the app lands you on the bulk you are running,
-or on the one field that starts one. Settings — your code, the alarm, the
+or on the one field that starts one. A fresh install asks once for a code, and
+takes "just this phone" for an answer. Settings — your code, the alarm, the
 backup — are one tap behind the `•••` on either screen.
 
 Every number is recomputed from stored timestamps against `Date.now()`, never

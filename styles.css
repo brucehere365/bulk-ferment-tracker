@@ -228,6 +228,41 @@ html.night .progressbar { background: rgba(232, 223, 213, .14); }
   display: block; height: 100%; border-radius: 3px; background: currentColor;
 }
 
+/* ================================================================ chart */
+.chartwrap {
+  background: var(--surface); border: 1px solid var(--line-soft);
+  border-radius: 24px; padding: 16px 14px 10px; margin-bottom: 14px;
+}
+.chartwrap svg { display: block; width: 100%; height: auto; overflow: visible; }
+.legend {
+  display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 4px 2px;
+  font: 400 9.5px/1.4 var(--mono); letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted-2);
+}
+.legend i { display: inline-block; width: 14px; height: 0; border-top-width: 2px; border-top-style: solid; vertical-align: 4px; margin-right: 5px; }
+.chart-empty {
+  padding: 34px 10px; text-align: center; color: var(--muted-2);
+  font: 400 11px/1.5 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+}
+/* Chart ink is themed here so the SVG carries no colour of its own. */
+.c-grid { stroke: var(--line-soft); }
+.c-vgrid { stroke: var(--line-soft); }
+.c-axis { fill: var(--muted-2); font-family: var(--mono); }
+.c-band { fill: var(--accent); opacity: .1; }
+.c-target { stroke: var(--accent); opacity: .7; }
+.c-target-text { fill: var(--accent); font-family: var(--mono); }
+.c-temp { stroke: var(--temp-line); opacity: .85; }
+.c-temp-mark { fill: var(--temp-line); }
+.c-temp-axis { fill: var(--muted-2); font-family: var(--mono); }
+.c-rise { stroke: var(--ink); }
+.c-proj { stroke: var(--muted-2); }
+.c-jar { fill: var(--surface); stroke: var(--accent); }
+.c-now { stroke: var(--muted-2); opacity: .6; }
+.c-now-text { fill: var(--muted-2); font-family: var(--mono); }
+.c-end { stroke: var(--accent); opacity: .5; }
+.c-end-dot { fill: var(--accent); }
+.c-end-text { fill: var(--accent); font-family: var(--mono); font-weight: 700; }
+
 /* ============================================================== buttons */
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
 .btn {
@@ -403,6 +438,7 @@ label.field textarea { min-height: 92px; resize: vertical; font-size: 16px; }
 #app.enter .hero.ready { animation: fade .7s ease-in-out both; }
 #app.enter .progressbar i { animation: rise .9s var(--ease) both; }
 
+#app.enter .c-rise { stroke-dasharray: 900; animation: draw 1.4s var(--ease) both; }
 @keyframes draw { from { stroke-dashoffset: 900; } to { stroke-dashoffset: 0; } }
 @keyframes rise { from { width: 0; } }
 @keyframes sheet { from { transform: translateY(28px); opacity: .4; } to { transform: translateY(0); opacity: 1; } }

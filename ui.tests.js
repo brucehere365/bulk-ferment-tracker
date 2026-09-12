@@ -27,7 +27,7 @@ function head(s) { console.log('\n' + s + '\n' + '-'.repeat(s.length)); }
 /* A window with a clock we can push forward. The app owns no timers of its own
  * — every number is rebuilt from stored timestamps against `Date.now()` — so
  * moving that one function is the whole of "eight hours later". */
-function boot(seed, offsetMs) {
+function boot(seed, offsetMs, syncSeed) {
   var d = new JSDOM(fs.readFileSync(path.join(DIR, 'index.html'), 'utf8'), {
     runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://example.test/'
   });
@@ -44,6 +44,7 @@ function boot(seed, offsetMs) {
   win.offset = offsetMs || 0;
   win.Date.now = function () { return real() + win.offset; };
   if (seed) win.localStorage.setItem('bft.v1', seed);
+  if (syncSeed) win.localStorage.setItem('bft.sync', syncSeed);
   ['model.js', 'app.js'].forEach(function (f) {
     win.eval(fs.readFileSync(path.join(DIR, f), 'utf8'));
   });
@@ -87,13 +88,37 @@ function advance(hours) {
 }
 function preshapeAt(s) { var m = /Preshape at\s*(\d\d:\d\d)/.exec(s); return m && m[1]; }
 
+head('A FRESH INSTALL ASKS FOR A CODE');
+/* Handing someone a link and a code only works if the app they open actually
+ * asks for the code — it used to sit in a sheet you had to go looking for. */
+ok('a fresh install asks up front', !!sheet() && /Do you have a code/.test(sheet().textContent));
+ok('and says a different code is a separate set of bakes',
+  /separate set of bakes/.test(sheet().textContent));
+ok('it can be skipped in one tap', !!act('firstrun-skip', sheet()));
+clickAct('firstrun-skip', sheet());
+ok('skipping closes it and stores nothing to sync with', !sheet() && !JSON.parse(w.localStorage.getItem('bft.sync')).code);
+/* Turning it down is an answer. A modal that comes back every launch until you
+ * give in is not asking, it is nagging. */
+var wAsked = boot(null, 0, JSON.stringify({ code: null, asked: true }));
+ok('and it never asks twice', !wAsked.document.querySelector('#sheet-root .sheet'));
+/* An install already in use has answered by using it; a modal over a running
+ * bulk would be the app interrupting rather than asking. */
+var wBusy = boot(JSON.stringify({
+  version: 3, activeId: null, savedAt: Date.now(), deleted: {},
+  bakes: [{ id: 'old', name: 'Earlier bake', startedAt: Date.now() - 7200000,
+    status: 'done', readings: [{ id: 'r', t: Date.now() - 7200000, temp: 24, rise: null, gapTemp: null }] }],
+  settings: { sound: true, notify: false }
+}), 0);
+ok('and never asks an install that already has bakes',
+  !wBusy.document.querySelector('#sheet-root .sheet'));
+
 head('BOOT');
 ok('lands straight on the bulk ferment form', !!$('#startform'));
 ok('there is no mode picker left to choose from', !act('mode-bulk') && !act('mode-full') && !act('mode-plan'));
 ok('and nowhere else for the app to be', !act('templates') && !act('loaves'));
 /* Booting with nothing must not write anything: the old unconditional boot
  * save is what turned an unreadable payload into a permanently blank one. */
-ok('a boot with no data writes nothing at all', w.localStorage.getItem('bft.v1') === null);
+ok('a boot with no data writes no bake state at all', w.localStorage.getItem('bft.v1') === null);
 /* The screen you are on when a bake has gone missing is the screen the backup
  * has to be reachable from, so settings hang off the start view too. */
 ok('settings are reachable from the empty screen', !!act('menu'));
@@ -126,13 +151,19 @@ ok('the hero says when to preshape', !!preshapeAt(text()));
 ok('the readings list has the first reading', $$('.reading').length === 1);
 ok('progress and dough temp are on screen',
   /Progress/.test(text()) && /Dough temp/.test(text()));
-/* The jar went, and with it the numbers only a jar could act on. */
-ok('and nothing about a jar is left', !/Target rise|Expected rise|jar/i.test(text()));
+/* Rise % comes from temperature and progress alone — no jar, nothing to log —
+ * and it is what you hold the bowl up against, so it stayed when the jar went. */
+ok('the rise you should see in the bowl is on screen',
+  /Risen by now/.test(text()) && /Risen when ready/.test(text()));
+ok('the chart is drawn', !!$('.chartwrap svg'));
+/* What went was the jar: the input side, with its logging and calibration. */
+ok('but there is nothing to log a jar reading with',
+  !act('lograise') && !act('resetcal') && !/aliquot/i.test(text()));
 ok('the cue list is instructions, with nothing to tick',
   /Domed, not flat/.test(text()) && $$('.cues input').length === 0);
 /* Invariant 6: one primary button, and it is the one that ends the bulk. */
 ok('the primary button is the one that ends the bulk',
-  $$('.btn.primary').length === 1 && act('finish').classList.contains('primary'));
+  $$('#app .btn.primary').length === 1 && act('finish').classList.contains('primary'));
 ok('there is no nav left, because there is nowhere to go', !$('.navpill'));
 
 head('LOGGING A TEMPERATURE THROUGH THE KEYPAD');
